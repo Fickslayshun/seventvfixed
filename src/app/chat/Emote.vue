@@ -11,7 +11,8 @@
 		<img
 			v-if="!emote.unicode && emote.data && emote.data.host"
 			class="seventv-chat-emote"
-			:srcset="unload ? '' : processSrcSet(emote)"
+			:src="resolveSrc(emote)"
+			:srcset="resolveSrcSet(emote)"
 			:alt="emote.name"
 			:class="{ blur: hideUnlisted && emote.data?.listed === false }"
 			loading="lazy"
@@ -33,7 +34,8 @@
 				v-if="e.data && e.data.host"
 				class="seventv-chat-emote zero-width-emote"
 				:class="{ blur: hideUnlisted && e.data?.listed === false }"
-				:srcset="processSrcSet(e)"
+				:src="resolveSrc(e)"
+				:srcset="resolveSrcSet(e)"
 				:alt="' ' + e.name"
 			/>
 		</template>
@@ -57,12 +59,14 @@
 </template>
 
 <script setup lang="ts">
-import { defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
+import { useDocumentVisibility } from "@vueuse/core";
 import { imageHostToSrcset } from "@/common/Image";
 import { determineRatio } from "@/common/Image";
 import { useChatPerformance } from "@/composable/chat/useChatPerformance";
 import { useConfig } from "@/composable/useSettings";
 import { useTooltip } from "@/composable/useTooltip";
+import { useUserAgent } from "@/composable/useUserAgent";
 import SingleEmoji from "@/assets/svg/emoji/SingleEmoji.vue";
 import EmoteTooltip from "./EmoteTooltip.vue";
 import UiFloating from "@/ui/UiFloating.vue";
@@ -87,6 +91,8 @@ const emit = defineEmits<{
 
 const hideUnlisted = useConfig<boolean>("general.blur_unlisted_emotes");
 const performance = useChatPerformance();
+const pageVisibility = useDocumentVisibility();
+const { preferredFormat } = useUserAgent();
 const loadEmoteCard = () => import("@/site/global/components/EmoteCard.vue");
 const EmoteCard = defineAsyncComponent(loadEmoteCard);
 
@@ -100,6 +106,10 @@ const src = ref("");
 
 const baseWidth = ref(0);
 const baseHeight = ref(0);
+
+const shouldThrottleAnimations = computed(
+	() => performance.animatedEmoteThrottlingEnabled.value && (pageVisibility.value !== "visible" || props.unload),
+);
 
 const onImageLoad = (event: Event) => {
 	if (!(event.target instanceof HTMLImageElement)) return;
@@ -115,15 +125,106 @@ const onImageLoad = (event: Event) => {
 };
 
 function processSrcSet(emote: SevenTV.ActiveEmote) {
+	const provider = emote.provider ?? "7TV";
+
 	if (emote.data?.host) {
 		if (props.scale != 1 || !emote.data.host.srcset) {
-			return imageHostToSrcset(emote.data.host, emote.provider, undefined, 2, props.scale);
+			return imageHostToSrcset(emote.data.host, provider, undefined, 2, props.scale);
 		} else {
 			return emote.data.host.srcset;
 		}
 	}
 
 	return "";
+}
+
+function buildStaticSrcSet(emote: SevenTV.ActiveEmote): string {
+	const host = emote.data?.host;
+	if (!host) return "";
+
+	const multipliers = getLayoutMultipliers(emote.provider ?? "7TV");
+	if (!multipliers.length) return "";
+
+	let srcset = "";
+	for (let i = 0; i < host.files.length; i++) {
+		const file = host.files[i];
+		const multiplier = multipliers[i];
+		if (!file?.static_name || !multiplier) continue;
+
+		if (srcset) srcset += ", ";
+		srcset += `${host.url}/${file.static_name} ${multiplier / props.scale}x`;
+	}
+
+	return srcset;
+}
+
+function resolveSrcSet(emote: SevenTV.ActiveEmote): string | undefined {
+	if (props.unload) return undefined;
+
+	if (shouldThrottleEmote(emote)) {
+		const staticSrcSet = buildStaticSrcSet(emote);
+		if (staticSrcSet) return staticSrcSet;
+	}
+
+	return processSrcSet(emote) || undefined;
+}
+
+function resolveSrc(emote: SevenTV.ActiveEmote): string | undefined {
+	const host = emote.data?.host;
+	if (!host) return undefined;
+
+	const provider = emote.provider ?? "7TV";
+
+	if (props.unload) return undefined;
+
+	if (shouldThrottleEmote(emote)) {
+		for (const file of host.files) {
+			if (!file?.static_name) continue;
+			return `${host.url}/${file.static_name}`;
+		}
+	}
+
+	const preferredFile =
+		provider === "7TV"
+			? host.files.find((file) => file.format === preferredFormat) ?? host.files[0]
+			: host.files[0];
+
+	return preferredFile ? `${host.url}/${preferredFile.name}` : undefined;
+}
+
+function shouldThrottleEmote(emote: SevenTV.ActiveEmote): boolean {
+	return shouldThrottleAnimations.value && isAnimatedEmote(emote) && hasStaticFallback(emote);
+}
+
+function hasStaticFallback(emote: SevenTV.ActiveEmote): boolean {
+	const host = emote.data?.host;
+	if (!host) return false;
+
+	return host.files.some((file) => !!file.static_name);
+}
+
+function getLayoutMultipliers(provider: SevenTV.Provider): number[] {
+	switch (provider) {
+		case "7TV":
+			return [1, 2, 3, 4];
+		case "PLATFORM":
+		case "FFZ":
+		case "BTTV":
+			return [1, 2, 4];
+		default:
+			return [];
+	}
+}
+
+function isAnimatedEmote(emote: SevenTV.ActiveEmote): boolean {
+	if (emote.data?.animated) return true;
+
+	const host = emote.data?.host;
+	if (!host) return false;
+
+	if (host.url.includes("/animated")) return true;
+
+	return host.files.some((file) => file.format === "GIF" || file.name.toLowerCase().endsWith(".gif"));
 }
 
 function onShowEmoteCard(ev: MouseEvent) {

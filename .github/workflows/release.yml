@@ -42,12 +42,14 @@ jobs:
       - name: Prepare release notes
         shell: pwsh
         run: |
-          if (Test-Path "./patchnotes.txt") {
-            Copy-Item "./patchnotes.txt" "./release-builds/release-notes.txt" -Force
-          }
-          else {
-            Set-Content "./release-builds/release-notes.txt" "Latest automatic build from main."
-          }
+          $repo = "${{ github.repository }}"
+          $patchnotesUrl = "https://github.com/$repo/blob/main/patchnotes.txt"
+          $updated = Get-Date -Format "dd/MM/yyyy"
+          @"
+          If you want to view the patchnotes, you can here: [patchnotes.txt]($patchnotesUrl)
+          
+          Last updated [$updated]
+          "@ | Set-Content "./release-builds/release-notes.txt"
 
       - name: Recreate rolling release
         shell: pwsh

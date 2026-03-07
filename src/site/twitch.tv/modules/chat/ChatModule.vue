@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { markRaw, reactive, ref, watch } from "vue";
+import { reactive, ref, watch } from "vue";
 import { refDebounced } from "@vueuse/shared";
 import { HookedInstance, getTrackedNode, useComponentHook } from "@/common/ReactHooks";
 import { declareModule } from "@/composable/useModule";
@@ -123,13 +123,15 @@ defineExpose({
 	chatController,
 	chatList,
 	chatRoom,
-	messageSendMiddleware: new Map<string, (v: string) => string>(),
+	messageSendMiddleware: new Map<string, (v: string) => string | null>(),
 });
 </script>
 
 <script lang="ts">
+import { markRaw } from "vue";
 import { HighlightDef } from "@/composable/chat/useChatHighlights";
 import { declareConfig, useConfig } from "@/composable/useSettings";
+import PersonalTimeoutManager from "./components/PersonalTimeoutManager.vue";
 import SettingsConfigHighlights from "@/app/settings/SettingsConfigHighlights.vue";
 
 export type TimestampFormatKey = "infer" | "12" | "24";
@@ -360,6 +362,38 @@ export const config = [
 		hint: "If enabled, middle mouse button clicking a username in chat opens that user's Twitch channel in a new tab",
 		defaultValue: false,
 	}),
+	declareConfig("chat.click_copy_username", "TOGGLE", {
+		path: ["7TVFixed", "Chat", 1],
+		label: "Click To Copy Username",
+		hint: "If enabled, Ctrl+LeftClick or Alt+LeftClick on a username copies that user's Twitch login, and a copy button is added to the user card",
+		defaultValue: false,
+	}),
+	declareConfig("chat.personal_timeouts", "TOGGLE", {
+		path: ["7TVFixed", "Chat", 2],
+		label: "Personal Timeouts",
+		hint: "If enabled, you can locally hide a chatter's messages for a chosen time without affecting Twitch moderation",
+		defaultValue: false,
+	}),
+	declareConfig("chat.personal_timeout_manager", "CUSTOM", {
+		path: ["7TVFixed", "Chat", 3],
+		label: "Manage Personal Timeouts",
+		hint: "Review, clear, and expire active local personal timeouts",
+		defaultValue: false,
+		disabledIf: () => !useConfig<boolean>("chat.personal_timeouts").value,
+		custom: {
+			component: markRaw(PersonalTimeoutManager),
+			gridMode: "new-row",
+		},
+	}),
+	declareConfig<import("@/composable/chat/usePersonalTimeouts").PersonalTimeoutEntry[]>(
+		"chat.personal_timeout_entries",
+		"NONE",
+		{
+			label: "Personal Timeout Entries",
+			defaultValue: [],
+			serialize: false,
+		},
+	),
 	declareConfig<boolean>("highlights.basic.mention", "TOGGLE", {
 		path: ["Highlights", "Built-In"],
 		label: "Show Mention Highlights",

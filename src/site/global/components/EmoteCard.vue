@@ -49,6 +49,7 @@
 <script setup lang="ts">
 import { reactive, ref, watch, watchEffect } from "vue";
 import { imageHostToSrcsetWithsize } from "@/common/Image";
+import { formatDateTime } from "@/common/IntlFormatter";
 import { log } from "@/common/Logger";
 import { convertTwitchEmote } from "@/common/Transform";
 import { useApollo } from "@/composable/useApollo";
@@ -70,6 +71,7 @@ const artist = reactive(emptyUser());
 const subtitle = ref("");
 const timestamp = ref("");
 const emoteLink = ref<string | null>(null);
+const locale = navigator.languages && navigator.languages.length ? navigator.languages[0] : navigator.language ?? "en";
 
 function emptyUser() {
 	return {
@@ -170,7 +172,11 @@ watchEffect(async () => {
 			{ immediate: true },
 		);
 
-		timestamp.value = new Date(props.emote.timestamp ?? 0).toLocaleDateString();
+		timestamp.value = formatDateTime(props.emote.timestamp ?? 0, locale, {
+			year: "numeric",
+			month: "numeric",
+			day: "numeric",
+		});
 		emoteLink.value = `//7tv.app/emotes/${props.emote.id}`;
 	} else if (props.emote.provider === "BTTV") emoteLink.value = `//betterttv.com/emotes/${props.emote.id}`;
 	else if (props.emote.provider === "FFZ") emoteLink.value = `//frankerfacez.com/emoticon/${props.emote.id}`;

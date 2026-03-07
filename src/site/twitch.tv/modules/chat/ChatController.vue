@@ -47,12 +47,18 @@ import { log } from "@/common/Logger";
 import { HookedInstance, awaitComponents } from "@/common/ReactHooks";
 import { defineFunctionHook, definePropertyHook, unsetPropertyHook } from "@/common/Reflection";
 import { ChatMessage } from "@/common/chat/ChatMessage";
+import {
+	DEFAULT_PERSONAL_TIMEOUT_DURATION,
+	formatTimeoutNotice,
+	parseTimeoutDuration,
+} from "@/common/chat/timeoutPresets";
 import { ChannelContext, ChannelRole, useChannelContext } from "@/composable/channel/useChannelContext";
 import { useChatEmotes } from "@/composable/chat/useChatEmotes";
 import { useChatMessages } from "@/composable/chat/useChatMessages";
 import { useChatProperties } from "@/composable/chat/useChatProperties";
 import { useChatScroller } from "@/composable/chat/useChatScroller";
 import { useChatTools } from "@/composable/chat/useChatTools";
+import { usePersonalTimeouts } from "@/composable/chat/usePersonalTimeouts";
 import { getModule } from "@/composable/useModule";
 import { useConfig } from "@/composable/useSettings";
 import { useWorker } from "@/composable/useWorker";
@@ -101,8 +107,10 @@ const scroller = useChatScroller(ctx, {
 	scroller: scrollerRef,
 	bounds: bounds,
 });
+const personalTimeouts = usePersonalTimeouts();
 const properties = useChatProperties(ctx);
 const tools = useChatTools(ctx);
+const personalTimeoutMiddlewareKey = `personal-timeout:${ctx.id}`;
 
 // line limit
 const lineLimit = useConfig("chat.line_limit", 150);
@@ -214,6 +222,79 @@ watch(
 	{ immediate: true },
 );
 
+function emitLocalSystemMessage(text: string): void {
+	const message = new ChatMessage().setComponent(BasicSystemMessage, {
+		text,
+	});
+	message.setTimestamp(Date.now());
+	messages.add(message, true);
+}
+
+function handlePersonalTimeoutCommand(input: string): string | null {
+	const trimmed = input.trim();
+	if (!trimmed.startsWith("/")) return input;
+
+	const [command, rawUsername, rawDuration] = trimmed.split(/\s+/, 3);
+	const normalizedCommand = command.toLowerCase();
+	if (normalizedCommand !== "/ptimeout" && normalizedCommand !== "/puntimeout") {
+		return input;
+	}
+
+	const username = rawUsername?.replace(/^@+/, "").trim().toLowerCase() ?? "";
+	if (!username) {
+		emitLocalSystemMessage(
+			normalizedCommand === "/ptimeout"
+				? "Usage: /ptimeout <username> [duration]"
+				: "Usage: /puntimeout <username>",
+		);
+		return null;
+	}
+
+	if (!personalTimeouts.enabled.value) {
+		emitLocalSystemMessage("Enable Personal Timeouts in 7TVFixed settings before using /ptimeout commands.");
+		return null;
+	}
+
+	if (normalizedCommand === "/puntimeout") {
+		const removed = personalTimeouts.clearEntry(ctx.id, username);
+		emitLocalSystemMessage(
+			removed ? `Cleared personal timeout for ${username}.` : `No active personal timeout for ${username}.`,
+		);
+		return null;
+	}
+
+	const duration = rawDuration?.trim() || DEFAULT_PERSONAL_TIMEOUT_DURATION;
+	if (!parseTimeoutDuration(duration)) {
+		emitLocalSystemMessage(`Invalid personal timeout duration: ${duration}.`);
+		return null;
+	}
+
+	const entry = personalTimeouts.upsertEntry(
+		{ id: ctx.id, username: ctx.username } as Pick<ChannelContext, "id" | "username">,
+		{
+			username,
+			displayName: rawUsername?.replace(/^@+/, "").trim() ?? username,
+		},
+		duration,
+	);
+	if (!entry) {
+		emitLocalSystemMessage(`Unable to create a personal timeout for ${username}.`);
+		return null;
+	}
+
+	emitLocalSystemMessage(formatTimeoutNotice(entry.displayName || entry.username, entry.duration, true) ?? "");
+	return null;
+}
+
+watch(
+	() => mod.instance,
+	(instance) => {
+		if (!instance) return;
+		instance.messageSendMiddleware.set(personalTimeoutMiddlewareKey, handlePersonalTimeoutCommand);
+	},
+	{ immediate: true },
+);
+
 // Keep track of chat state
 definePropertyHook(controller.value.component, "props", {
 	value(v: typeof controller.value.component.props) {
@@ -264,7 +345,12 @@ definePropertyHook(controller.value.component, "props", {
 
 			// Run message content patching middleware
 			for (const fn of mod.instance?.messageSendMiddleware.values() ?? []) {
-				args[0] = fn(args[0]);
+				const nextValue = fn(args[0]);
+				if (nextValue === null) {
+					return Promise.resolve(undefined);
+				}
+
+				args[0] = nextValue;
 			}
 
 			return old?.apply(this, args);
@@ -465,6 +551,7 @@ onBeforeUnmount(() => {
 
 onUnmounted(() => {
 	resizeObserver.disconnect();
+	mod.instance?.messageSendMiddleware.delete(personalTimeoutMiddlewareKey);
 
 	el.remove();
 	if (replacedEl.value) replacedEl.value.classList.remove("seventv-checked");

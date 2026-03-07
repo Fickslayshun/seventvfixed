@@ -4,6 +4,9 @@ import { useConfig } from "@/composable/useSettings";
 const FRONT_PAGE_VIDEO_SELECTOR = "div[data-a-player-type='frontpage'] video";
 const FRONT_PAGE_IFRAME_SELECTOR = "div[data-a-target='frontpage-headliner'] iframe";
 
+const patchedVideos = new WeakSet<HTMLVideoElement>();
+const patchedFrames = new WeakSet<HTMLIFrameElement>();
+
 function isFrontPageVideo(target: EventTarget | null): target is HTMLVideoElement {
 	return target instanceof HTMLVideoElement && !!target.closest("div[data-a-player-type='frontpage']");
 }
@@ -40,6 +43,28 @@ function stopFrontPageFrame(frame: HTMLIFrameElement): void {
 	}
 }
 
+function isOnFrontPageRoute(): boolean {
+	return window.location.pathname === "/";
+}
+
+function patchFrontPageVideo(video: HTMLVideoElement): void {
+	if (patchedVideos.has(video)) return;
+	patchedVideos.add(video);
+
+	video.play = () => {
+		stopFrontPageVideo(video);
+		return Promise.resolve();
+	};
+	stopFrontPageVideo(video);
+}
+
+function patchFrontPageFrame(frame: HTMLIFrameElement): void {
+	if (patchedFrames.has(frame)) return;
+	patchedFrames.add(frame);
+
+	stopFrontPageFrame(frame);
+}
+
 export function useFrontPageDisabler(): void {
 	const disableFrontPage = useConfig<boolean>("layout.disable_front_page");
 
@@ -47,8 +72,16 @@ export function useFrontPageDisabler(): void {
 	let queuedFrame: number | null = null;
 
 	function stopFrontPagePlayback(): void {
-		document.querySelectorAll<HTMLVideoElement>(FRONT_PAGE_VIDEO_SELECTOR).forEach(stopFrontPageVideo);
-		document.querySelectorAll<HTMLIFrameElement>(FRONT_PAGE_IFRAME_SELECTOR).forEach(stopFrontPageFrame);
+		if (!isOnFrontPageRoute()) return;
+
+		document.querySelectorAll<HTMLVideoElement>(FRONT_PAGE_VIDEO_SELECTOR).forEach((video) => {
+			patchFrontPageVideo(video);
+			stopFrontPageVideo(video);
+		});
+		document.querySelectorAll<HTMLIFrameElement>(FRONT_PAGE_IFRAME_SELECTOR).forEach((frame) => {
+			patchFrontPageFrame(frame);
+			stopFrontPageFrame(frame);
+		});
 	}
 
 	function cancelQueuedStop(): void {
@@ -84,8 +117,6 @@ export function useFrontPageDisabler(): void {
 		observer.observe(document.body, {
 			childList: true,
 			subtree: true,
-			attributes: true,
-			attributeFilter: ["src"],
 		});
 
 		document.addEventListener("play", onFrontPagePlaybackAttempt, true);

@@ -97,6 +97,7 @@ const timestampCache = new Map<string, string>();
 <script setup lang="ts">
 import { defineAsyncComponent, ref, toRef, watch } from "vue";
 import { SetHexAlpha } from "@/common/Color";
+import { formatDateTime } from "@/common/IntlFormatter";
 import { log } from "@/common/Logger";
 import type { AnyToken, ChatMessage, ChatUser } from "@/common/chat/ChatMessage";
 import { IsEmoteToken, IsLinkToken, IsMentionToken } from "@/common/type-predicates/MessageTokens";
@@ -114,7 +115,6 @@ import MessageTokenLink from "./MessageTokenLink.vue";
 import MessageTokenMention from "./MessageTokenMention.vue";
 import UserMessageButtons from "./UserMessageButtons.vue";
 import UserTag from "./UserTag.vue";
-import intlFormat from "date-fns/fp/intlFormat";
 
 const props = withDefaults(
 	defineProps<{
@@ -383,17 +383,13 @@ function formatTimestamp(
 	const cached = timestampCache.get(key);
 	if (cached) return cached;
 
-	const formatted = intlFormat(
-		{ locale: activeLocale },
-		{
-			localeMatcher: "lookup",
-			hour: "2-digit",
-			minute: "2-digit",
-			second: showSeconds ? "numeric" : undefined,
-			...{ hourCycle },
-		},
-		time,
-	);
+	const formatted = formatDateTime(time, activeLocale, {
+		localeMatcher: "lookup",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: showSeconds ? "numeric" : undefined,
+		...(hourCycle ? { hourCycle } : {}),
+	});
 
 	timestampCache.set(key, formatted);
 	return formatted;

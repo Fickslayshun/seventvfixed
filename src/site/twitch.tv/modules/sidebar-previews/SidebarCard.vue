@@ -9,6 +9,10 @@ import { useApollo } from "@/composable/useApollo";
 import { useConfig } from "@/composable/useSettings";
 import { twitchSidebarCardQuery } from "@/assets/gql/tw.sidebar-card.gql";
 
+const SIDEBAR_TITLE_CACHE_TTL_MS = 5 * 60 * 1000;
+const SIDEBAR_TITLE_NEGATIVE_CACHE_TTL_MS = 30 * 1000;
+const sidebarTitleCache = new Map<string, { title: string; expiresAt: number }>();
+
 const props = defineProps<{
 	instance: HookedInstance<Twitch.SidebarCardComponent>;
 }>();
@@ -21,6 +25,29 @@ const metadataLeft = ref<Twitch.SidebarCardComponent["props"]["metadataLeft"]>()
 const tooltipContent = ref<Twitch.SidebarCardComponent["props"]["tooltipContent"]>();
 const streamTitle = ref("");
 let sidebarTitleRequest = 0;
+
+function readCachedSidebarTitle(login: string | undefined): string | null {
+	if (!login) return null;
+
+	const key = login.toLowerCase();
+	const cached = sidebarTitleCache.get(key);
+	if (!cached) return null;
+	if (cached.expiresAt <= Date.now()) {
+		sidebarTitleCache.delete(key);
+		return null;
+	}
+
+	return cached.title;
+}
+
+function writeCachedSidebarTitle(login: string | undefined, title: string, ttlMs: number): void {
+	if (!login) return;
+
+	sidebarTitleCache.set(login.toLowerCase(), {
+		title,
+		expiresAt: Date.now() + ttlMs,
+	});
+}
 
 definePropertyHook(props.instance.component, "props", {
 	value: (v: Twitch.SidebarCardComponent["props"]) => {
@@ -73,7 +100,19 @@ watch(
 	[() => props.instance.component.props.userLogin, () => props.instance.component.props.offline],
 	() => {
 		sidebarTitleRequest++;
-		streamTitle.value = extractTooltipStreamTitleFromContent(tooltipContent.value, extractText(metadataLeft.value));
+		const gameTitle = extractText(metadataLeft.value);
+		const extractedTitle = extractTooltipStreamTitleFromContent(tooltipContent.value, gameTitle);
+		const cachedTitle = readCachedSidebarTitle(props.instance.component.props.userLogin);
+
+		if (isUsefulSidebarTitle(extractedTitle, props.instance.component.props.title, gameTitle)) {
+			writeCachedSidebarTitle(
+				props.instance.component.props.userLogin,
+				extractedTitle,
+				SIDEBAR_TITLE_CACHE_TTL_MS,
+			);
+		}
+
+		streamTitle.value = cachedTitle || extractedTitle;
 	},
 	{ immediate: true },
 );
@@ -89,6 +128,14 @@ watch(
 		if (!enabled || !client || !login || offline) return;
 
 		const gameTitle = extractText(metadataLeft.value);
+		const cachedTitle = readCachedSidebarTitle(login);
+		if (cachedTitle !== null) {
+			if (cachedTitle) {
+				streamTitle.value = cachedTitle;
+			}
+			return;
+		}
+
 		if (isUsefulSidebarTitle(streamTitle.value, props.instance.component.props.title, gameTitle)) return;
 
 		const requestID = ++sidebarTitleRequest;
@@ -111,11 +158,17 @@ watch(
 					props.instance.component.props.title,
 					gameTitle,
 				);
-				if (!title) return;
+				if (!title) {
+					writeCachedSidebarTitle(login, "", SIDEBAR_TITLE_NEGATIVE_CACHE_TTL_MS);
+					return;
+				}
 
+				writeCachedSidebarTitle(login, title, SIDEBAR_TITLE_CACHE_TTL_MS);
 				streamTitle.value = title;
 			})
-			.catch(() => void 0);
+			.catch(() => {
+				writeCachedSidebarTitle(login, "", SIDEBAR_TITLE_NEGATIVE_CACHE_TTL_MS);
+			});
 	},
 	{ immediate: true },
 );
@@ -125,7 +178,11 @@ function rerenderCard() {
 }
 
 function patchTooltip(tooltip: ReactExtended.ReactRuntimeElement, vnode: ReactExtended.ReactRuntimeElement) {
-	streamTitle.value = extractTooltipStreamTitle(tooltip, vnode, extractText(metadataLeft.value));
+	const nextTitle = extractTooltipStreamTitle(tooltip, vnode, extractText(metadataLeft.value));
+	streamTitle.value = nextTitle;
+	if (isUsefulSidebarTitle(nextTitle, props.instance.component.props.title, extractText(metadataLeft.value))) {
+		writeCachedSidebarTitle(props.instance.component.props.userLogin, nextTitle, SIDEBAR_TITLE_CACHE_TTL_MS);
+	}
 
 	if (replaceHoverBox.value) return null;
 	if (!showPreviews.value) return vnode;

@@ -33,60 +33,48 @@ let positionOwner: symbol | undefined;
 const x = ref(0);
 const y = ref(0);
 
-async function updatePosition(tX: number, tY: number) {
-	if (!el.value) return;
+function clampPosition(nextX: number, nextY: number): [number, number] | null {
+	if (!el.value) return null;
 
-	const id = Symbol();
-	positionOwner = id;
+	const padding = 8;
+	const maxX = Math.max(padding, window.innerWidth - el.value.offsetWidth - padding);
+	const maxY = Math.max(padding, window.innerHeight - el.value.offsetHeight - padding);
 
-	const { x: cX, y: cY } = await computePosition(
-		{
-			getBoundingClientRect() {
-				return {
-					width: 0,
-					height: 0,
-					x: tX,
-					y: tY,
-					top: tY,
-					left: tX,
-					right: tX,
-					bottom: tY,
-				};
-			},
-			contextElement: props.initialAnchor instanceof HTMLElement ? props.initialAnchor : undefined,
-		},
-		el.value,
-		{
-			middleware: middleware,
-			placement: "bottom-start",
-		},
-	);
+	return [Math.min(Math.max(nextX, padding), maxX), Math.min(Math.max(nextY, padding), maxY)];
+}
 
-	if (positionOwner === id) {
-		x.value = cX;
-		y.value = cY;
-	}
+function updatePosition(nextX: number, nextY: number) {
+	const clamped = clampPosition(nextX, nextY);
+	if (!clamped) return;
+
+	x.value = clamped[0];
+	y.value = clamped[1];
 }
 
 async function positionToAnchor(anchor: ReferenceElement) {
 	if (!el.value) return;
 
-	const { x: tX, y: tY } = await computePosition(anchor, el.value, {
-		middleware: props.initialMiddleware,
-		placement: props.initialPlacement,
+	const id = Symbol();
+	positionOwner = id;
+
+	const { x: nextX, y: nextY } = await computePosition(anchor, el.value, {
+		middleware: props.initialMiddleware ?? middleware,
+		placement: props.initialPlacement ?? "bottom-start",
 	});
 
-	await updatePosition(tX, tY);
+	if (positionOwner === id) {
+		updatePosition(nextX, nextY);
+	}
 }
 
-let dragTimeout: number | undefined;
+let dragFrame: number | null = null;
 
 useDraggable(el, {
 	onMove({ x, y }) {
-		if (!dragTimeout) {
-			window.requestAnimationFrame(() => {
+		if (dragFrame === null) {
+			dragFrame = window.requestAnimationFrame(() => {
 				updatePosition(x, y);
-				dragTimeout = undefined;
+				dragFrame = null;
 			});
 		}
 	},
@@ -97,7 +85,14 @@ useDraggable(el, {
 let stopUpdating: (() => void) | undefined;
 
 watch(
-	() => [el.value, props.initialPosition, props.initialMiddleware, props.initialPlacement],
+	() => [
+		el.value,
+		props.initialAnchor,
+		props.initialPosition?.[0],
+		props.initialPosition?.[1],
+		props.initialPlacement,
+		props.once,
+	],
 	() => {
 		stopUpdating?.();
 		stopUpdating = undefined;
@@ -126,7 +121,7 @@ watch(
 			() => {
 				if (init) {
 					if (props.initialAnchor) {
-						positionToAnchor(props.initialAnchor);
+						void positionToAnchor(props.initialAnchor);
 					} else {
 						const tX = props.initialPosition?.[0] ?? 0;
 						const tY = props.initialPosition?.[1] ?? 0;
@@ -157,7 +152,7 @@ onBeforeUnmount(() => {
 	stopUpdating?.();
 	stopClickout?.();
 
-	if (dragTimeout) cancelAnimationFrame(dragTimeout);
+	if (dragFrame !== null) cancelAnimationFrame(dragFrame);
 });
 </script>
 

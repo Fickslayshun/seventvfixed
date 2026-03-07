@@ -132,6 +132,7 @@ export function useChatPerformance(ctx?: Pick<ChannelContext, "id">) {
 		workerPathEnabled: computed(() => performanceMode.value && state.workerPathEnabled),
 		virtualizationEnabled: computed(() => performanceMode.value && state.virtualizationEnabled),
 		asyncHydrationEnabled: computed(() => performanceMode.value && state.asyncHydrationEnabled),
+		animatedEmoteThrottlingEnabled: computed(() => performanceMode.value && state.virtualizationEnabled),
 		prewarmEnabled: computed(() => performanceMode.value && state.tier !== "severe"),
 		heavyRowsHydratedOnly: computed(() => performanceMode.value && state.tier !== "default"),
 		richEmbedsEnabled: computed(() => !performanceMode.value || state.tier !== "severe"),

@@ -65,6 +65,8 @@ import { useChatMessages } from "@/composable/chat/useChatMessages";
 import { useChatPerformance } from "@/composable/chat/useChatPerformance";
 import { useChatProperties } from "@/composable/chat/useChatProperties";
 import { useChatScroller } from "@/composable/chat/useChatScroller";
+import { useOpenUserCards } from "@/composable/chat/useOpenUserCards";
+import { usePersonalTimeouts } from "@/composable/chat/usePersonalTimeouts";
 import { useCosmetics } from "@/composable/useCosmetics";
 import { useConfig } from "@/composable/useSettings";
 import { WorkletEvent, useWorker } from "@/composable/useWorker";
@@ -89,7 +91,16 @@ const ctx = useChannelContext();
 const { identity } = storeToRefs(useStore());
 const emotes = useChatEmotes(ctx);
 const messages = useChatMessages(ctx);
+const openUserCards = useOpenUserCards();
 const displayedMessages = toRef(messages, "displayed");
+const personalTimeouts = usePersonalTimeouts();
+const visibleMessages = computed(() =>
+	displayedMessages.value.filter((message) => {
+		if (openUserCards.isOpen(message.sym)) return true;
+
+		return !personalTimeouts.shouldHideMessage(ctx, message);
+	}),
+);
 const scroller = useChatScroller(ctx);
 const performance = useChatPerformance(ctx);
 const properties = useChatProperties(ctx);
@@ -208,7 +219,7 @@ let virtualLayoutFrame: number | null = null;
 let forceStickToBottom = false;
 
 const renderedRows = computed(() =>
-	displayedMessages.value.slice(renderedRange.start, renderedRange.end).map((msg, offset) => {
+	visibleMessages.value.slice(renderedRange.start, renderedRange.end).map((msg, offset) => {
 		const index = renderedRange.start + offset;
 		return {
 			msg,
@@ -227,7 +238,7 @@ useEventListener(
 );
 
 watch(
-	() => displayedMessages.value.length,
+	() => visibleMessages.value.map((message) => message.sym),
 	() => queueVirtualLayout(shouldStickToBottom()),
 	{ immediate: true },
 );
@@ -235,6 +246,8 @@ watch(
 watch([() => scroller.bounds?.height, performance.virtualizationEnabled], () => queueVirtualLayout(false), {
 	immediate: true,
 });
+
+watch(openUserCards.version, () => queueVirtualLayout(false));
 
 onUnmounted(() => {
 	if (virtualLayoutFrame !== null) {
@@ -691,9 +704,9 @@ function queueVirtualLayout(stickToBottom = false): void {
 		} catch (err) {
 			performance.disableVirtualization(err instanceof Error ? err.message : String(err));
 			visibleRange.start = 0;
-			visibleRange.end = displayedMessages.value.length;
+			visibleRange.end = visibleMessages.value.length;
 			renderedRange.start = 0;
-			renderedRange.end = displayedMessages.value.length;
+			renderedRange.end = visibleMessages.value.length;
 			topSpacerHeight.value = 0;
 			bottomSpacerHeight.value = 0;
 		}
@@ -711,18 +724,21 @@ function shouldStickToBottom(): boolean {
 }
 
 function isHydratedIndex(index: number): boolean {
+	const msg = visibleMessages.value[index];
+	if (msg && openUserCards.isOpen(msg.sym)) return true;
+
 	return (
 		index >= Math.max(0, visibleRange.start - HYDRATION_OVERSCAN_ABOVE) &&
-		index < Math.min(displayedMessages.value.length, visibleRange.end + HYDRATION_OVERSCAN_BELOW)
+		index < Math.min(visibleMessages.value.length, visibleRange.end + HYDRATION_OVERSCAN_BELOW)
 	);
 }
 
 function recalculateVirtualLayout(): void {
 	if (!performance.virtualizationEnabled.value) {
 		visibleRange.start = 0;
-		visibleRange.end = displayedMessages.value.length;
+		visibleRange.end = visibleMessages.value.length;
 		renderedRange.start = 0;
-		renderedRange.end = displayedMessages.value.length;
+		renderedRange.end = visibleMessages.value.length;
 		topSpacerHeight.value = 0;
 		bottomSpacerHeight.value = 0;
 		return;
@@ -734,13 +750,14 @@ function recalculateVirtualLayout(): void {
 	const viewportHeight = scroller.bounds?.height ?? container.clientHeight;
 	const scrollTop = container.scrollTop;
 	const scrollBottom = scrollTop + viewportHeight;
+	const messagesToRender = visibleMessages.value;
 
 	let offset = 0;
 	let visibleStartIndex = -1;
-	let visibleEndIndex = displayedMessages.value.length;
+	let visibleEndIndex = messagesToRender.length;
 
-	for (let index = 0; index < displayedMessages.value.length; index++) {
-		const msg = displayedMessages.value[index];
+	for (let index = 0; index < messagesToRender.length; index++) {
+		const msg = messagesToRender[index];
 		if (!msg) continue;
 
 		const height = getRowHeight(msg);
@@ -758,7 +775,7 @@ function recalculateVirtualLayout(): void {
 		offset = nextOffset;
 	}
 
-	if (!displayedMessages.value.length) {
+	if (!messagesToRender.length) {
 		visibleStartIndex = 0;
 		visibleEndIndex = 0;
 	} else if (visibleStartIndex === -1) {
@@ -771,19 +788,30 @@ function recalculateVirtualLayout(): void {
 
 	visibleRange.start = visibleStartIndex;
 	visibleRange.end = visibleEndIndex;
-	renderedRange.start = Math.max(0, visibleStartIndex - 30);
-	renderedRange.end = Math.min(displayedMessages.value.length, visibleEndIndex + 50);
+	let renderedStart = Math.max(0, visibleStartIndex - 30);
+	let renderedEnd = Math.min(messagesToRender.length, visibleEndIndex + 50);
+
+	for (let index = 0; index < messagesToRender.length; index++) {
+		const msg = messagesToRender[index];
+		if (!msg || !openUserCards.isOpen(msg.sym)) continue;
+
+		renderedStart = Math.min(renderedStart, index);
+		renderedEnd = Math.max(renderedEnd, index + 1);
+	}
+
+	renderedRange.start = renderedStart;
+	renderedRange.end = renderedEnd;
 
 	let topHeight = 0;
 	for (let index = 0; index < renderedRange.start; index++) {
-		const msg = displayedMessages.value[index];
+		const msg = messagesToRender[index];
 		if (!msg) continue;
 		topHeight += getRowHeight(msg);
 	}
 
 	let bottomHeight = 0;
-	for (let index = renderedRange.end; index < displayedMessages.value.length; index++) {
-		const msg = displayedMessages.value[index];
+	for (let index = renderedRange.end; index < messagesToRender.length; index++) {
+		const msg = messagesToRender[index];
 		if (!msg) continue;
 		bottomHeight += getRowHeight(msg);
 	}

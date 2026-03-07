@@ -1,14 +1,22 @@
-Full Patch Notes
+# Patch Notes
+
+07/03/2026 - Performance + QoL Updates
+- Improved general performance
+- Improved 'Performance Mode' setting
+- Added 'Click To Copy Username' setting
+- Added 'Personal Timeouts' setting
+- Fixed a bug causing emotes to be disabled in the chatbox when replying
+- Fixed a bug causing the 7TV improved usercard to move/close randomly
 
 06/03/2026 - Settings update and bug fix
 - Added '7TVFixed' category within 7TV settings
 - Added 'Middle Click To Profile' setting
 - Added 'Disable Front Page' setting
-- Fixed subscription anniversay messages not being sent
+- Fixed subscription anniversary messages not being sent
 
 05/03/2026 - Initial Updates
 - Built in performance increases/fixes
 - Added experimental 'Performance' setting
-- Added 'Stream Title Hover' setting 
+- Added 'Stream Title Hover' setting
 - Onboarding process overhaul
-- Fixed a bug causing emotes to be entirely disabled in the chatbox 
+- Fixed a bug causing emotes to be entirely disabled in the chatbox

@@ -54,30 +54,40 @@
 		</span>
 	</div>
 
-	<template v-if="showUserCard && tagRef">
+	<template v-if="showUserCard && userCardPosition">
 		<Teleport to="#seventv-float-context">
 			<UiDraggable
 				class="seventv-user-card-float"
 				:handle="cardHandle"
-				:initial-anchor="tagRef"
-				:initial-middleware="[shift({ mainAxis: true, crossAxis: true }), autoPlacement()]"
+				:initial-position="userCardPosition"
+				:initial-middleware="userCardInitialMiddleware"
 				:once="true"
 			>
-				<UserCard :target="props.user" @close="showUserCard = false" @mount-handle="cardHandle = $event" />
+				<UserCard :target="props.user" @close="closeUserCard" @mount-handle="cardHandle = $event" />
 			</UiDraggable>
+		</Teleport>
+	</template>
+
+	<template v-if="copyToastOpen && copyToastContainer">
+		<Teleport :to="copyToastContainer">
+			<UiCopiedMessageToast message="Username copied" @close="copyToastOpen = false" />
 		</Teleport>
 	</template>
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, ref, toRef, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onUnmounted, ref, toRef, watch } from "vue";
+import { copyText } from "@/common/Clipboard";
 import type { ChatUser } from "@/common/chat/ChatMessage";
 import { useChannelContext } from "@/composable/channel/useChannelContext";
 import { useChatPerformance } from "@/composable/chat/useChatPerformance";
 import { useChatProperties } from "@/composable/chat/useChatProperties";
+import { useOpenUserCards } from "@/composable/chat/useOpenUserCards";
 import { useCosmetics } from "@/composable/useCosmetics";
+import { useFloatScreen } from "@/composable/useFloatContext";
 import { useConfig } from "@/composable/useSettings";
 import Badge, { TwitchChatBadgeWithData } from "./Badge.vue";
+import UiCopiedMessageToast from "@/ui/UiCopiedMessageToast.vue";
 import UiDraggable from "@/ui/UiDraggable.vue";
 import { autoPlacement, shift } from "@floating-ui/dom";
 
@@ -109,6 +119,7 @@ enum MentionStyle {
 }
 
 const ctx = useChannelContext();
+const openUserCards = useOpenUserCards();
 const performance = useChatPerformance();
 const properties = useChatProperties(ctx);
 const cosmetics = useCosmetics(props.user.id);
@@ -116,6 +127,7 @@ const shouldRenderPaint = useConfig<boolean>("vanity.nametag_paints");
 const shouldRender7tvBadges = useConfig<boolean>("vanity.7tv_Badges");
 const betterUserCardEnabled = useConfig<boolean>("chat.user_card");
 const middleClickToProfileEnabled = useConfig<boolean>("chat.middle_click_profile");
+const clickCopyUsernameEnabled = useConfig<boolean>("chat.click_copy_username");
 const twitchBadges = ref<TwitchChatBadgeWithData[]>([]);
 const twitchBadgeSets = toRef(properties, "twitchBadgeSets");
 const mentionStyle = useConfig<MentionStyle>("chat.colored_mentions");
@@ -123,8 +135,17 @@ const mentionStyle = useConfig<MentionStyle>("chat.colored_mentions");
 const tagRef = ref<HTMLDivElement>();
 const showUserCard = ref(false);
 const cardHandle = ref<HTMLDivElement>();
+const copyToastOpen = ref(false);
+const userCardPosition = ref<[number, number] | null>(null);
 const paint = ref<SevenTV.Cosmetic<"PAINT"> | null>(null);
 const activeBadges = ref<SevenTV.Cosmetic<"BADGE">[]>([]);
+let copyToastTimer: number | null = null;
+const copyToastContainer = useFloatScreen(tagRef, {
+	enabled: () => copyToastOpen.value,
+	placement: "top",
+	middleware: [shift({ padding: 8 })],
+});
+const userCardInitialMiddleware = [shift({ mainAxis: true, crossAxis: true }), autoPlacement()];
 
 const shouldPaint = computed(() => {
 	if (!shouldRenderPaint.value) return false;
@@ -152,12 +173,58 @@ watch(
 
 function handleClick(ev: MouseEvent) {
 	if (!props.clickable) return;
+	if (shouldCopyUsername(ev)) {
+		ev.preventDefault();
+		ev.stopPropagation();
+		void copyUsername();
+		return;
+	}
+
 	if (!betterUserCardEnabled.value) {
 		emit("open-native-card", ev);
 		return;
 	}
 
-	showUserCard.value = !showUserCard.value;
+	if (!showUserCard.value) {
+		const rect = tagRef.value?.getBoundingClientRect();
+		userCardPosition.value = rect ? [rect.left, rect.bottom] : [ev.clientX, ev.clientY];
+		if (props.msgId) openUserCards.open(props.msgId);
+		showUserCard.value = true;
+		return;
+	}
+
+	closeUserCard();
+}
+
+async function copyUsername(): Promise<void> {
+	const ok = await copyText(props.user.username);
+	if (!ok) return;
+
+	if (copyToastTimer !== null) {
+		clearTimeout(copyToastTimer);
+	}
+
+	copyToastOpen.value = true;
+	copyToastTimer = window.setTimeout(() => {
+		copyToastOpen.value = false;
+		copyToastTimer = null;
+	}, 1000);
+}
+
+function closeUserCard(): void {
+	showUserCard.value = false;
+	userCardPosition.value = null;
+	if (props.msgId) openUserCards.close(props.msgId);
+}
+
+function shouldCopyUsername(ev: MouseEvent): boolean {
+	return (
+		!!props.user.username &&
+		props.clickable &&
+		clickCopyUsernameEnabled.value &&
+		ev.button === 0 &&
+		(ev.altKey || ev.ctrlKey)
+	);
 }
 
 function shouldOpenProfileWithMiddleClick(ev: MouseEvent): boolean {
@@ -208,6 +275,17 @@ const stop = watch(
 	},
 	{ immediate: true },
 );
+
+onUnmounted(() => {
+	if (copyToastTimer !== null) {
+		clearTimeout(copyToastTimer);
+		copyToastTimer = null;
+	}
+
+	if (props.msgId) {
+		openUserCards.close(props.msgId);
+	}
+});
 
 function resolveTwitchBadges(
 	badges: Record<string, string> | undefined,

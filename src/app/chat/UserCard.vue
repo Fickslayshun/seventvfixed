@@ -11,6 +11,11 @@
 							@click="highlightUserMessages"
 						/>
 						<BellIcon v-else v-tooltip="t('user_card.highlight')" @click="highlightUserMessages" />
+						<CopyIcon
+							v-if="clickCopyUsernameEnabled && data.targetUser.username"
+							v-tooltip="copiedUsername ? 'Copied' : 'Copy Username'"
+							@click="copyUsername"
+						/>
 						<LogoTwitch v-tooltip="t('user_card.native')" @click="openNativeCard" />
 						<CloseIcon class="close-button" @click="emit('close')" />
 					</div>
@@ -84,10 +89,7 @@
 
 					<!-- Mod Icons -->
 					<UserCardMod
-						v-if="
-							(ctx.actor.roles.has('MODERATOR') && !data.targetUser.isModerator) ||
-							ctx.actor.roles.has('BROADCASTER')
-						"
+						v-if="showModerationOrPersonalActions"
 						:target="data.targetUser"
 						:ban="data.ban"
 						:is-moderator="data.targetUser.isModerator"
@@ -128,6 +130,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch, watchEffect } from
 import { useI18n } from "vue-i18n";
 import { storeToRefs } from "pinia";
 import { useStore } from "@/store/main";
+import { copyText } from "@/common/Clipboard";
 import { log } from "@/common/Logger";
 import { convertTwitchMessage } from "@/common/Transform";
 import { convertTwitchBadge } from "@/common/Transform";
@@ -139,6 +142,7 @@ import { useChatTools } from "@/composable/chat/useChatTools";
 import { useApollo } from "@/composable/useApollo";
 import { useCosmetics } from "@/composable/useCosmetics";
 import { getModuleRef } from "@/composable/useModule";
+import { useConfig } from "@/composable/useSettings";
 import { TwTypeChatBanStatus, TwTypeModComment } from "@/assets/gql/tw.gql";
 import {
 	twitchUserCardMessagesQuery,
@@ -149,6 +153,7 @@ import BellIcon from "@/assets/svg/icons/BellIcon.vue";
 import BellSlashIcon from "@/assets/svg/icons/BellSlashIcon.vue";
 import CakeIcon from "@/assets/svg/icons/CakeIcon.vue";
 import CloseIcon from "@/assets/svg/icons/CloseIcon.vue";
+import CopyIcon from "@/assets/svg/icons/CopyIcon.vue";
 import HeartIcon from "@/assets/svg/icons/HeartIcon.vue";
 import StarIcon from "@/assets/svg/icons/StarIcon.vue";
 import LogoTwitch from "@/assets/svg/logos/LogoTwitch.vue";
@@ -180,6 +185,8 @@ const { identity } = storeToRefs(useStore());
 const cosmetics = useCosmetics(props.target.id);
 const tools = useChatTools(ctx);
 const chatHighlights = useChatHighlights(ctx);
+const clickCopyUsernameEnabled = useConfig<boolean>("chat.click_copy_username");
+const personalTimeoutsEnabled = useConfig<boolean>("chat.personal_timeouts");
 
 const apollo = useApollo();
 const { t } = useI18n();
@@ -187,6 +194,7 @@ const { t } = useI18n();
 const scroller = ref<InstanceType<typeof UiScrollable> | undefined>();
 const dragHandle = ref<HTMLDivElement | undefined>();
 const cardRef = ref<HTMLElement | null>(null);
+const copiedUsername = ref(false);
 const data = reactive({
 	activeTab: "messages" as UserCardTabName,
 	canActorAccessLogs: false,
@@ -240,6 +248,14 @@ const avatarURL = computed(() => {
 	if (!aMod?.instance?.avatars) return;
 	const avatar = aMod.instance.avatars[data.targetUser.username] as SevenTV.Cosmetic<"AVATAR"> | undefined;
 	return avatar?.data.user.avatar_url;
+});
+
+const showModerationOrPersonalActions = computed(() => {
+	return (
+		personalTimeoutsEnabled.value ||
+		(ctx.actor.roles.has("MODERATOR") && !data.targetUser.isModerator) ||
+		ctx.actor.roles.has("BROADCASTER")
+	);
 });
 
 function getActiveTimeline(): Record<string, ChatMessage[]> {
@@ -414,6 +430,18 @@ function openNativeCard(ev: MouseEvent): void {
 	if (!ok) return;
 
 	emit("close");
+}
+
+async function copyUsername(): Promise<void> {
+	if (!data.targetUser.username) return;
+
+	const ok = await copyText(data.targetUser.username);
+	if (!ok) return;
+
+	copiedUsername.value = true;
+	window.setTimeout(() => {
+		copiedUsername.value = false;
+	}, 1200);
 }
 
 function highlightUserMessages(): void {

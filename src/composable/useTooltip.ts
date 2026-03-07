@@ -17,9 +17,17 @@ export const tooltip = reactive({
  * @returns
  */
 export function useTooltip(content?: string | Component, props?: Record<string, unknown>, opt?: TooltipOptions) {
-	// this shows the tooltip
-	function show(el: HTMLElement | undefined): void {
-		if (!el) return;
+	let showTimeout: number | null = null;
+
+	function clearPendingShow(): void {
+		if (showTimeout === null) return;
+
+		clearTimeout(showTimeout);
+		showTimeout = null;
+	}
+
+	function applyTooltip(el: HTMLElement): void {
+		clearPendingShow();
 
 		// Set the content, this is necessary to calculate the tooltip's positioning
 		if (content !== undefined) {
@@ -39,8 +47,23 @@ export function useTooltip(content?: string | Component, props?: Record<string, 
 		});
 	}
 
+	// this shows the tooltip
+	function show(el: HTMLElement | undefined): void {
+		if (!el) return;
+
+		const dwellMs = typeof content === "string" ? 0 : opt?.dwellMs ?? 120;
+		if (dwellMs <= 0) {
+			applyTooltip(el);
+			return;
+		}
+
+		clearPendingShow();
+		showTimeout = window.setTimeout(() => applyTooltip(el), dwellMs);
+	}
+
 	// this hides the tooltip
 	function hide(): void {
+		clearPendingShow();
 		tooltip.content = null;
 		tooltip.contentProps = {};
 	}
@@ -50,4 +73,5 @@ export function useTooltip(content?: string | Component, props?: Record<string, 
 
 interface TooltipOptions {
 	placement?: Placement;
+	dwellMs?: number;
 }

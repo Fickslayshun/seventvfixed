@@ -18,6 +18,7 @@ import { useStore } from "@/store/main";
 import { REACT_TYPEOF_TOKEN } from "@/common/Constant";
 import { imageHostToSrcset } from "@/common/Image";
 import { TabToken, getSearchRange } from "@/common/Input";
+import { ChatAutocompleteIndex } from "@/common/chat/AutocompleteIndex";
 import { HookedInstance } from "@/common/ReactHooks";
 import {
 	defineFunctionHook,
@@ -29,6 +30,7 @@ import {
 import { useChannelContext } from "@/composable/channel/useChannelContext";
 import { useChatEmotes } from "@/composable/chat/useChatEmotes";
 import { useChatMessages } from "@/composable/chat/useChatMessages";
+import { useChatPerformance } from "@/composable/chat/useChatPerformance";
 import { useCosmetics } from "@/composable/useCosmetics";
 import { getModule } from "@/composable/useModule";
 import { useConfig } from "@/composable/useSettings";
@@ -102,12 +104,17 @@ const store = useStore();
 const ctx = useChannelContext(props.instance.component.componentRef.props.channelID, true);
 const messages = useChatMessages(ctx);
 const emotes = useChatEmotes(ctx);
+const performance = useChatPerformance(ctx);
 const cosmetics = useCosmetics(store.identity?.id ?? "");
 const ua = useUserAgent();
+const autocompleteIndex = new ChatAutocompleteIndex();
+const autocompleteIndexState = {
+	dirty: true,
+};
 
 const autocompletionMode = useConfig("chat_input.autocomplete.colon");
 const shouldColonCompleteEmoji = useConfig("chat_input.autocomplete.colon.emoji");
-const shouldAutocompleteChatters = useConfig("chat_input.autocomplete.chatters");
+const shouldAutocompleteChatters = useConfig<boolean>("chat_input.autocomplete.chatters");
 const shouldRenderAutocompleteCarousel = useConfig("chat_input.autocomplete.carousel");
 const mayUseControlEnter = useConfig("chat_input.spam.rapid_fire_send");
 const colonCompletionMode = useConfig<number>("chat_input.autocomplete.colon.mode");
@@ -148,6 +155,41 @@ const isShift = useKeyModifier("Shift");
 
 useEventListener(window, "keydown", handleCapturedKeyDown, { capture: true });
 
+watch(
+	() => performance.enabled.value,
+	() => {
+		autocompleteIndexState.dirty = true;
+	},
+	{ immediate: true },
+);
+
+watch(
+	() => [
+		Object.keys(cosmetics.emotes).join("|"),
+		Object.entries(emotes.providers)
+			.filter(([provider]) => provider !== "EMOJI")
+			.map(([provider, sets]) => `${provider}:${Object.entries(sets).map(([id, set]) => `${id}:${set.emotes.length}`).join(",")}`)
+			.join("|"),
+		Object.keys(emotes.emojis).length,
+		Object.keys(messages.chatters).length,
+	],
+	() => {
+		autocompleteIndexState.dirty = true;
+	},
+);
+
+function ensureAutocompleteIndex(): void {
+	if (!performance.enabled.value || !autocompleteIndexState.dirty) return;
+
+	autocompleteIndex.rebuild({
+		personalEmotes: cosmetics.emotes,
+		providers: emotes.providers,
+		emojis: emotes.emojis,
+		chatters: messages.chatters,
+	});
+	autocompleteIndexState.dirty = false;
+}
+
 function findMatchingTokens(str: string, mode: "tab" | "colon" = "tab", limit?: number): TabToken[] {
 	const usedTokens = new Set<string>();
 
@@ -164,6 +206,16 @@ function findMatchingTokens(str: string, mode: "tab" | "colon" = "tab", limit?: 
 			0: token.toLowerCase().startsWith(prefix),
 			1: token.toLowerCase().includes(prefix),
 		})[testMode];
+
+	if (performance.enabled.value) {
+		ensureAutocompleteIndex();
+		return autocompleteIndex.query(str, {
+			mode,
+			matchMode: testMode as 0 | 1,
+			includeChatters: shouldAutocompleteChatters.value,
+			limit,
+		});
+	}
 
 	for (const [token, ae] of Object.entries(cosmetics.emotes)) {
 		if (usedTokens.has(token) || !test(token)) continue;
@@ -306,14 +358,6 @@ function isAutocompleteTrayOpen(): boolean {
 	return !!tray && (tray.type as string) === "autocomplete-tray";
 }
 
-function hasNativeSendTrayOverride(): boolean {
-	const tray = props.instance.component.props?.tray as Twitch.ChatTray | undefined;
-	if (!tray?.sendMessageHandler) return false;
-
-	const trayType = tray.type as string;
-	return trayType !== "autocomplete-tray" && trayType !== "seventv-custom-tray";
-}
-
 function closeAutocompleteTray(): void {
 	if (!isAutocompleteTrayOpen()) return;
 
@@ -327,7 +371,6 @@ function closeAutocompleteTray(): void {
 
 function stripInputEmoteSets(propsValue: unknown): void {
 	if (!propsValue || typeof propsValue !== "object") return;
-	if (hasNativeSendTrayOverride()) return;
 
 	const v = propsValue as { emotes?: Twitch.TwitchEmoteSet[] };
 	if (Array.isArray(v.emotes) && v.emotes.length > 0) {
@@ -337,7 +380,6 @@ function stripInputEmoteSets(propsValue: unknown): void {
 
 function stripProviderEmoteSets(propsValue: unknown): void {
 	if (!propsValue || typeof propsValue !== "object") return;
-	if (hasNativeSendTrayOverride()) return;
 
 	const v = propsValue as { emote?: { emotes?: Twitch.TwitchEmoteSet[] } };
 	if (Array.isArray(v.emote?.emotes) && v.emote.emotes.length > 0) {
@@ -629,10 +671,6 @@ function resetState() {
 
 function onKeyDown(ev: KeyboardEvent) {
 	if (ev.isComposing) return;
-	if (hasNativeSendTrayOverride()) {
-		clearTabCycle();
-		return;
-	}
 
 	const isTypingCharacter = ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
 	if (isTypingCharacter && isSlateSelectionRange()) {
@@ -687,10 +725,6 @@ function handleCapturedKeyDown(ev: KeyboardEvent) {
 	if (ev.isComposing) return;
 
 	if (!isEventFromChatRoot(ev)) return;
-	if (hasNativeSendTrayOverride()) {
-		clearTabCycle();
-		return;
-	}
 
 	const isTypingCharacter = ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
 	if (isTypingCharacter && isSlateSelectionRange()) {
@@ -925,13 +959,6 @@ defineFunctionHook(
 	props.instance.component,
 	"onEditableValueUpdate",
 	function (old, value: string, sendOnUpdate?: boolean, ...args: unknown[]) {
-		if (hasNativeSendTrayOverride()) {
-			awaitingUpdate.value = false;
-			textValue.value = value;
-			clearTabCycle();
-			return old?.call(this, value, sendOnUpdate, ...args);
-		}
-
 		if (forceResetOnNextEditableUpdate.value) {
 			forceResetOnNextEditableUpdate.value = false;
 			awaitingUpdate.value = false;
