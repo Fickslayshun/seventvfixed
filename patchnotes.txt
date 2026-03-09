@@ -1,5 +1,12 @@
 # Patch Notes
 
+09/03/2026 - 7TVerino Beta
+- Added '7TVerino BETA' setting
+- Added tabbed multi-channel 7TVerino chat
+- Added remote channel chat sending
+- Fixed added channels getting stuck on "Waiting for Twitch chat socket"
+- Fixed remote chat reply text rendering off screen
+
 08/03/2026 - Recent Emotes + Usercard Updates
 - Added 'Recent Emotes' setting
 - Added suspicious user section to 7TV improved usercards
