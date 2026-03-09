@@ -15,6 +15,7 @@ export class WorkerPort {
 	identity: TwitchIdentity | YouTubeIdentity | null = null;
 	user: SevenTV.User | null = null;
 	imageFormat: SevenTV.ImageFormat | null = null;
+	tverinoChannelIDs = new Set<string>();
 
 	constructor(
 		private driver: WorkerDriver,
@@ -120,7 +121,37 @@ export class WorkerPort {
 				}
 				break;
 			}
+			case "TVERINO_CHAT_AUTH": {
+				const auth = data as TypedWorkerMessage<"TVERINO_CHAT_AUTH">;
+				this.driver.emit("tverino_chat_auth", auth, this);
+				break;
+			}
+			case "TVERINO_CHAT_SUBSCRIBE": {
+				const sub = data as TypedWorkerMessage<"TVERINO_CHAT_SUBSCRIBE">;
+				this.driver.emit("tverino_chat_subscribe", sub, this);
+				break;
+			}
+			case "TVERINO_CHAT_UNSUBSCRIBE": {
+				const sub = data as TypedWorkerMessage<"TVERINO_CHAT_UNSUBSCRIBE">;
+				this.driver.emit("tverino_chat_unsubscribe", sub, this);
+				break;
+			}
+			case "TVERINO_CHAT_SEND": {
+				const payload = data as TypedWorkerMessage<"TVERINO_CHAT_SEND">;
+				this.driver.emit("tverino_chat_send", payload, this);
+				break;
+			}
+			case "TVERINO_BADGE_SETS_FETCH": {
+				const payload = data as TypedWorkerMessage<"TVERINO_BADGE_SETS_FETCH">;
+				this.driver.emit("tverino_badge_sets_fetch", payload, this);
+				break;
+			}
 			case "CLOSE":
+				for (const channelID of this.tverinoChannelIDs) {
+					this.driver.emit("tverino_chat_unsubscribe", { channelID }, this);
+				}
+				this.tverinoChannelIDs.clear();
+
 				for (const channel of this.channels.values()) {
 					this.driver.emit("part_channel", channel, this);
 				}

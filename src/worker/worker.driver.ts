@@ -2,13 +2,16 @@ import type { TypedEventListenerOrEventListenerObject } from "@/common/EventTarg
 import { Logger, log } from "@/common/Logger";
 import { getRandomInt } from "@/common/Rand";
 import { Dexie7, db } from "@/db/idb";
+import type { TypedWorkerMessage } from ".";
 import { EventAPI } from "./worker.events";
 import { WorkerHttp } from "./worker.http";
 import { WorkerPort } from "./worker.port";
+import { TVerinoChatTransport } from "./tverino.transport";
 
 export class WorkerDriver extends EventTarget {
 	http: WorkerHttp;
 	eventAPI: EventAPI;
+	tverinoTransport: TVerinoChatTransport;
 	db: Dexie7;
 	log: Logger;
 
@@ -36,6 +39,7 @@ export class WorkerDriver extends EventTarget {
 
 		this.http = new WorkerHttp(this);
 		this.eventAPI = new EventAPI(this);
+		this.tverinoTransport = new TVerinoChatTransport(this);
 
 		db.ready().then(async () => {
 			// Fetch global emotes & cosmetics
@@ -144,7 +148,12 @@ type WorkerEventName =
 	| "identity_updated"
 	| "user_updated"
 	| "request_user_cosmetics"
-	| "imageformat_updated";
+	| "imageformat_updated"
+	| "tverino_chat_auth"
+	| "tverino_chat_subscribe"
+	| "tverino_chat_unsubscribe"
+	| "tverino_chat_send"
+	| "tverino_badge_sets_fetch";
 
 type WorkerTypedEvent<EVN extends WorkerEventName> = {
 	open: void;
@@ -158,6 +167,15 @@ type WorkerTypedEvent<EVN extends WorkerEventName> = {
 	user_updated: SevenTV.User;
 	request_user_cosmetics: ["id" | "username", string][];
 	imageformat_updated: string;
+	tverino_chat_auth: {
+		login: string;
+		userID: string;
+		token: string;
+	};
+	tverino_chat_subscribe: TypedWorkerMessage<"TVERINO_CHAT_SUBSCRIBE">;
+	tverino_chat_unsubscribe: TypedWorkerMessage<"TVERINO_CHAT_UNSUBSCRIBE">;
+	tverino_chat_send: TypedWorkerMessage<"TVERINO_CHAT_SEND">;
+	tverino_badge_sets_fetch: TypedWorkerMessage<"TVERINO_BADGE_SETS_FETCH">;
 }[EVN];
 
 export class WorkerEvent<T extends WorkerEventName> extends CustomEvent<WorkerTypedEvent<T>> {

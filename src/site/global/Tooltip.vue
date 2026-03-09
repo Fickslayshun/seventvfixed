@@ -53,6 +53,7 @@ onMounted(() => {
 
 	.text-only-tooltip {
 		padding: 0.25rem;
+		white-space: pre-line;
 	}
 }
 

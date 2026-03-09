@@ -24,6 +24,8 @@ interface ChatScroller {
 	bounds: DOMRect | undefined;
 }
 
+const LIVE_SCROLL_TOLERANCE_PX = 12;
+
 const m = new WeakMap<ChannelContext, ChatScroller>();
 
 export function useChatScroller(ctx: ChannelContext, initWith?: ChatScrollerInit) {
@@ -149,7 +151,7 @@ export function useChatScroller(ctx: ChannelContext, initWith?: ChatScrollerInit
 		});
 
 		// Whether or not the scrollbar is at the bottom
-		const live = (data.live = top >= h - 1);
+		const live = (data.live = top >= h - LIVE_SCROLL_TOLERANCE_PX);
 
 		if (data.init) {
 			return;

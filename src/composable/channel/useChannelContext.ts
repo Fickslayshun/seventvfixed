@@ -13,6 +13,7 @@ export class ChannelContext implements CurrentChannel {
 	id = "";
 	username = "";
 	displayName = "";
+	remote = false;
 	user?: SevenTV.User;
 	loaded = false;
 	setsFetched = false;

@@ -29,6 +29,15 @@ export enum workerMessageType {
 	REQUEST_USER_COSMETICS,
 	PROCESS_CHAT_MESSAGE,
 	PROCESS_CHAT_MESSAGE_RESULT,
+	TVERINO_CHAT_AUTH,
+	TVERINO_CHAT_SUBSCRIBE,
+	TVERINO_CHAT_UNSUBSCRIBE,
+	TVERINO_CHAT_SEND,
+	TVERINO_CHAT_MESSAGE,
+	TVERINO_CHAT_SEND_RESULT,
+	TVERINO_CHAT_STATUS,
+	TVERINO_BADGE_SETS_FETCH,
+	TVERINO_BADGE_SETS_RESULT,
 }
 
 export type WorkerMessageType = keyof typeof workerMessageType;
@@ -101,6 +110,47 @@ export type TypedWorkerMessage<T extends WorkerMessageType> = {
 		requestID: string;
 		messageID: string;
 		result: NormalizedChatMessage | null;
+		error?: string;
+	};
+	TVERINO_CHAT_AUTH: {
+		login: string;
+		userID: string;
+		token: string;
+	};
+	TVERINO_CHAT_SUBSCRIBE: {
+		channel: CurrentChannel;
+	};
+	TVERINO_CHAT_UNSUBSCRIBE: {
+		channelID: string;
+	};
+	TVERINO_CHAT_SEND: {
+		channelID: string;
+		channelLogin: string;
+		message: string;
+		nonce: string;
+	};
+	TVERINO_CHAT_MESSAGE: {
+		channelID: string;
+		message: Twitch.AnyMessage;
+	};
+	TVERINO_CHAT_SEND_RESULT: {
+		channelID: string;
+		nonce: string;
+		ok: boolean;
+		error?: string;
+		messageID?: string;
+	};
+	TVERINO_CHAT_STATUS: SevenTV.TVerinoTransportStatus;
+	TVERINO_BADGE_SETS_FETCH: {
+		requestID: string;
+		channelID: string;
+		clientID: string;
+		token: string;
+	};
+	TVERINO_BADGE_SETS_RESULT: {
+		requestID: string;
+		channelID: string;
+		badgeSets: Twitch.BadgeSets | null;
 		error?: string;
 	};
 }[T];

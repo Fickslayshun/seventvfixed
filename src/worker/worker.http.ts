@@ -29,6 +29,8 @@ const SHOULD_LOG_API_RESPONSE_BODY = import.meta.env.MODE !== "production";
 
 export class WorkerHttp {
 	private lastPresenceAt: Map<string, number> = new Map();
+	private tverinoGlobalBadgeSetsPromise: Promise<Map<string, Map<string, Twitch.ChatBadge>>> | null = null;
+	private tverinoChannelBadgeSetsPromises = new Map<string, Promise<Map<string, Map<string, Twitch.ChatBadge>>>>();
 	static imageFormat: SevenTV.ImageFormat = "WEBP";
 
 	constructor(private driver: WorkerDriver) {
@@ -84,6 +86,84 @@ export class WorkerHttp {
 				this.driver.eventAPI.onDispatch(cosmeticEvent);
 			}
 		});
+		driver.addEventListener("tverino_badge_sets_fetch", async (ev) => {
+			if (!ev.port) return;
+
+			const { requestID, channelID, clientID, token } = ev.detail;
+			try {
+				const badgeSets = await this.fetchTverinoBadgeSets(channelID, clientID, token);
+				ev.port.postMessage("TVERINO_BADGE_SETS_RESULT", {
+					requestID,
+					channelID,
+					badgeSets,
+				});
+			} catch (err) {
+				ev.port.postMessage("TVERINO_BADGE_SETS_RESULT", {
+					requestID,
+					channelID,
+					badgeSets: null,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		});
+	}
+
+	private async fetchTverinoBadgeSets(
+		channelID: string,
+		clientID: string,
+		token: string,
+	): Promise<Twitch.BadgeSets> {
+		const [globalsBySet, channelsBySet] = await Promise.all([
+			this.fetchTverinoGlobalBadgeSets(clientID, token),
+			this.fetchTverinoChannelBadgeSets(channelID, clientID, token),
+		]);
+
+		return {
+			globalsBySet,
+			channelsBySet,
+			count: globalsBySet.size + channelsBySet.size,
+		};
+	}
+
+	private fetchTverinoGlobalBadgeSets(
+		clientID: string,
+		token: string,
+	): Promise<Map<string, Map<string, Twitch.ChatBadge>>> {
+		this.tverinoGlobalBadgeSetsPromise ??= fetchTwitchHelixBadgeSets(
+			"https://api.twitch.tv/helix/chat/badges/global",
+			clientID,
+			token,
+		).catch((err) => {
+			this.tverinoGlobalBadgeSetsPromise = null;
+			throw err;
+		});
+		return this.tverinoGlobalBadgeSetsPromise;
+	}
+
+	private fetchTverinoChannelBadgeSets(
+		channelID: string,
+		clientID: string,
+		token: string,
+	): Promise<Map<string, Map<string, Twitch.ChatBadge>>> {
+		const normalizedChannelID = channelID.trim();
+		if (!normalizedChannelID) {
+			return Promise.resolve(new Map());
+		}
+
+		let pending = this.tverinoChannelBadgeSetsPromises.get(normalizedChannelID);
+		if (!pending) {
+			pending = fetchTwitchHelixBadgeSets(
+				`https://api.twitch.tv/helix/chat/badges?broadcaster_id=${encodeURIComponent(normalizedChannelID)}`,
+				clientID,
+				token,
+			).catch((err) => {
+				this.tverinoChannelBadgeSetsPromises.delete(normalizedChannelID);
+				throw err;
+			});
+			this.tverinoChannelBadgeSetsPromises.set(normalizedChannelID, pending);
+		}
+
+		return pending;
 	}
 
 	public async fetchConfig(): Promise<SevenTV.Config> {
@@ -487,4 +567,70 @@ async function doRequest<T = object>(base: string, path: string, method?: string
 
 		return resp;
 	});
+}
+
+interface TwitchHelixBadgeVersion {
+	id: string;
+	image_url_1x: string;
+	image_url_2x: string;
+	image_url_4x: string;
+	title: string;
+	description: string;
+	click_action: string | null;
+	click_url: string | null;
+}
+
+interface TwitchHelixBadgeSet {
+	set_id: string;
+	versions: TwitchHelixBadgeVersion[];
+}
+
+interface TwitchHelixBadgeResponse {
+	data: TwitchHelixBadgeSet[];
+}
+
+async function fetchTwitchHelixBadgeSets(
+	url: string,
+	clientID: string,
+	token: string,
+): Promise<Map<string, Map<string, Twitch.ChatBadge>>> {
+	const response = await fetch(url, {
+		headers: {
+			Authorization: `Bearer ${token.trim().replace(/^oauth:/i, "")}`,
+			"Client-Id": clientID.trim(),
+		},
+		referrer: location.origin,
+		referrerPolicy: "origin",
+	});
+
+	if (!response.ok) {
+		throw new Error(`Badge request failed: ${response.status}`);
+	}
+
+	const data = (await response.json()) as TwitchHelixBadgeResponse;
+	const sets = new Map<string, Map<string, Twitch.ChatBadge>>();
+
+	for (const set of data.data ?? []) {
+		const versions = new Map<string, Twitch.ChatBadge>();
+		for (const badge of set.versions ?? []) {
+			versions.set(badge.id, {
+				id: badge.id,
+				image1x: badge.image_url_1x,
+				image2x: badge.image_url_2x,
+				image4x: badge.image_url_4x,
+				title: badge.title || badge.description || `${set.set_id} ${badge.id}`,
+				clickAction: badge.click_action,
+				clickURL: badge.click_url,
+				setID: set.set_id,
+				version: badge.id,
+				__typename: "ChatBadge",
+			});
+		}
+
+		if (versions.size) {
+			sets.set(set.set_id, versions);
+		}
+	}
+
+	return sets;
 }

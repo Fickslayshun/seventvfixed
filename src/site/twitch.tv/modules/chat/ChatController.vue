@@ -1,38 +1,49 @@
 <!-- eslint-disable no-fallthrough -->
 <template>
 	<Teleport v-if="ctx.id" :to="containerEl">
-		<UiScrollable
-			ref="scrollerRef"
-			class="seventv-chat-scroller"
-			:style="{ fontFamily: properties.fontAprilFools }"
-			@container-scroll="scroller.onScroll"
-			@container-wheel="scroller.onWheel"
-			@mouseenter="properties.hovering = true"
-			@mouseleave="properties.hovering = false"
-		>
-			<div id="seventv-message-container" class="seventv-message-container">
-				<ChatList
-					ref="chatList"
-					:list="list"
-					:restrictions="restrictions"
-					:shared-chat-data="sharedChatDataByChannelID"
-					:message-handler="messageHandler"
-				/>
-			</div>
+		<TVerinoChatShell
+			v-if="tverinoEnabled"
+			:header-container="headerContainerEl"
+			:current-ctx="ctx"
+			:list="list"
+			:restrictions="restrictions"
+			:message-handler="messageHandler"
+			:shared-chat-data="sharedChatDataByChannelID"
+		/>
+		<template v-else>
+			<UiScrollable
+				ref="scrollerRef"
+				class="seventv-chat-scroller"
+				:style="{ fontFamily: properties.fontAprilFools }"
+				@container-scroll="scroller.onScroll"
+				@container-wheel="scroller.onWheel"
+				@mouseenter="properties.hovering = true"
+				@mouseleave="properties.hovering = false"
+			>
+				<div id="seventv-message-container" class="seventv-message-container">
+					<ChatList
+						ref="chatList"
+						:list="list"
+						:restrictions="restrictions"
+						:shared-chat-data="sharedChatDataByChannelID"
+						:message-handler="messageHandler"
+					/>
+				</div>
 
-			<!-- New Messages during Scrolling Pause -->
-			<div v-if="scroller.paused" class="seventv-message-buffer-notice" @click="scroller.unpause">
-				<PauseIcon />
+				<!-- New Messages during Scrolling Pause -->
+				<div v-if="scroller.paused" class="seventv-message-buffer-notice" @click="scroller.unpause">
+					<PauseIcon />
 
-				<span v-if="scroller.pauseBuffer.length" :class="{ capped: scroller.pauseBuffer.length >= lineLimit }">
-					{{ scroller.pauseBuffer.length }}
-				</span>
-				<span>{{ scroller.pauseBuffer.length > 0 ? "new messages" : "Chat Paused" }}</span>
-			</div>
-		</UiScrollable>
+					<span v-if="scroller.pauseBuffer.length" :class="{ capped: scroller.pauseBuffer.length >= lineLimit }">
+						{{ scroller.pauseBuffer.length }}
+					</span>
+					<span>{{ scroller.pauseBuffer.length > 0 ? "new messages" : "Chat Paused" }}</span>
+				</div>
+			</UiScrollable>
 
-		<!-- Data Logic -->
-		<ChatData v-if="ctx.loaded" />
+			<!-- Data Logic -->
+			<ChatData v-if="ctx.loaded" />
+		</template>
 	</Teleport>
 
 	<ChatTray />
@@ -63,7 +74,8 @@ import { useRecentSentEmotes } from "@/composable/chat/useRecentSentEmotes";
 import { getModule } from "@/composable/useModule";
 import { useConfig } from "@/composable/useSettings";
 import { useWorker } from "@/composable/useWorker";
-import { MessageType } from "@/site/twitch.tv";
+import { useStore } from "@/store/main";
+import { MessagePartType, MessageType } from "@/site/twitch.tv";
 import ChatList from "@/site/twitch.tv/modules/chat/ChatList.vue";
 import PauseIcon from "@/assets/svg/icons/PauseIcon.vue";
 import ChatPubSub from "./ChatPubSub.vue";
@@ -71,6 +83,9 @@ import ChatTray from "./components/tray/ChatTray.vue";
 import ChatData from "@/app/chat/ChatData.vue";
 import BasicSystemMessage from "@/app/chat/msg/BasicSystemMessage.vue";
 import UiScrollable from "@/ui/UiScrollable.vue";
+import TVerinoChatShell from "./TVerinoChatShell.vue";
+import { setTwitchHelixAuth } from "./twitchHelixAuth";
+import { useTVerinoChatTransport } from "./useTVerinoChatTransport";
 
 const props = defineProps<{
 	controller: HookedInstance<Twitch.ChatControllerComponent>;
@@ -84,6 +99,8 @@ const props = defineProps<{
 
 const mod = getModule<"TWITCH", "chat">("chat")!;
 const { sendMessage: sendWorkerMessage } = useWorker();
+const store = useStore();
+const { sendChatMessage: sendTVerinoChatMessage, emitLocalMessage: emitTVerinoLocalMessage } = useTVerinoChatTransport();
 
 const { list, controller, room, presentation } = toRefs(props);
 
@@ -92,7 +109,18 @@ el.id = "seventv-chat-controller";
 
 const chatList = ref<InstanceType<typeof ChatList> | undefined>();
 const containerEl = ref<HTMLElement>(el);
+const headerHostEl = document.createElement("seventv-container");
+headerHostEl.id = "seventv-tverino-header";
+const headerContainerEl = ref<HTMLElement>(headerHostEl);
 const replacedEl = ref<Element | null>(null);
+let observedChatRoomRoot: HTMLElement | null = null;
+let observedMessageViewport: HTMLElement | null = null;
+let hiddenAlertNodes: Array<{
+	el: HTMLElement;
+	display: string;
+	displayPriority: string;
+}> = [];
+let alertObserver: MutationObserver | null = null;
 
 const bounds = ref<DOMRect>(el.getBoundingClientRect());
 const scrollerRef = ref<InstanceType<typeof UiScrollable> | undefined>();
@@ -113,6 +141,13 @@ const recentSentEmotes = useRecentSentEmotes();
 const properties = useChatProperties(ctx);
 const tools = useChatTools(ctx);
 const personalTimeoutMiddlewareKey = `personal-timeout:${ctx.id}`;
+const tverinoEnabled = useConfig<boolean>("chat.tverino.enabled", false);
+const tverinoActiveTarget = useConfig<SevenTV.TVerinoActiveTarget>("chat.tverino.active_target", {
+	kind: "native",
+	id: "",
+	login: "",
+	displayName: "",
+});
 
 // line limit
 const lineLimit = useConfig("chat.line_limit", 150);
@@ -133,6 +168,128 @@ watch(
 	{ immediate: true },
 );
 
+function discardRelocatedAlertLane() {
+	for (const node of hiddenAlertNodes) {
+		if (node.display) {
+			node.el.style.setProperty("display", node.display, node.displayPriority);
+		} else {
+			node.el.style.removeProperty("display");
+		}
+	}
+
+	hiddenAlertNodes = [];
+}
+
+function restoreRelocatedAlertLane() {
+	discardRelocatedAlertLane();
+}
+
+function disconnectAlertRelocationObserver() {
+	alertObserver?.disconnect();
+	alertObserver = null;
+	observedChatRoomRoot = null;
+	observedMessageViewport = null;
+}
+
+function resolveAlertLaneRoot(stickyAlert: HTMLElement, messageViewport: HTMLElement): HTMLElement | null {
+	let laneRoot = stickyAlert;
+	while (laneRoot.parentElement && !laneRoot.parentElement.contains(messageViewport)) {
+		laneRoot = laneRoot.parentElement;
+	}
+
+	if (laneRoot === messageViewport || laneRoot.contains(messageViewport)) return null;
+	return laneRoot;
+}
+
+function findTopAlertLanes(chatRoomRoot: HTMLElement): HTMLElement[] {
+	return Array.from(
+		chatRoomRoot.querySelectorAll<HTMLElement>(
+			"div.cEllaX, div.eIWExh, .sticky-community-highlight, [class*='community-highlight-stack'], [class*='community-highlight']",
+		),
+	);
+}
+
+function trackHiddenAlertNode(el: HTMLElement) {
+	if (hiddenAlertNodes.some((node) => node.el === el)) return;
+
+	hiddenAlertNodes.push({
+		el,
+		display: el.style.getPropertyValue("display"),
+		displayPriority: el.style.getPropertyPriority("display"),
+	});
+}
+
+function syncAlertDock(chatRoomRoot: HTMLElement | null, messageViewport: HTMLElement | null) {
+	if (!tverinoEnabled.value || !chatRoomRoot || !messageViewport) {
+		restoreRelocatedAlertLane();
+		return;
+	}
+
+	observedChatRoomRoot = chatRoomRoot;
+	observedMessageViewport = messageViewport;
+
+	const topAlertLanes = findTopAlertLanes(chatRoomRoot);
+	if (!topAlertLanes.length) {
+		restoreRelocatedAlertLane();
+		return;
+	}
+
+	const nextHiddenNodes = new Set<HTMLElement>();
+	for (const lane of topAlertLanes) {
+		nextHiddenNodes.add(lane);
+		const exactAlertLane = lane.closest("div.cEllaX") as HTMLElement | null;
+		if (exactAlertLane) nextHiddenNodes.add(exactAlertLane);
+		const exactAlertWrapper = lane.closest("div.eIWExh") as HTMLElement | null;
+		if (exactAlertWrapper) nextHiddenNodes.add(exactAlertWrapper);
+
+		let node: HTMLElement | null = lane;
+		while (node && node !== chatRoomRoot && !node.contains(messageViewport)) {
+			nextHiddenNodes.add(node);
+			const parent: HTMLElement | null = node.parentElement;
+			if (!parent || parent.contains(messageViewport)) break;
+			node = parent;
+		}
+	}
+
+	const hiddenNow = hiddenAlertNodes.map((node) => node.el);
+	const unchanged =
+		hiddenNow.length === nextHiddenNodes.size && hiddenNow.every((node) => nextHiddenNodes.has(node));
+	if (unchanged) return;
+
+	restoreRelocatedAlertLane();
+
+	hiddenAlertNodes = [];
+	for (const el of nextHiddenNodes) {
+		trackHiddenAlertNode(el);
+	}
+
+	for (const node of hiddenAlertNodes) {
+		node.el.style.setProperty("display", "none", "important");
+	}
+}
+
+function connectAlertRelocationObserver(chatRoomRoot: HTMLElement | null, messageViewport: HTMLElement | null) {
+	if (!tverinoEnabled.value || !chatRoomRoot || !messageViewport) {
+		disconnectAlertRelocationObserver();
+		return;
+	}
+
+	if (alertObserver && observedChatRoomRoot === chatRoomRoot && observedMessageViewport === messageViewport) {
+		return;
+	}
+
+	disconnectAlertRelocationObserver();
+	observedChatRoomRoot = chatRoomRoot;
+	observedMessageViewport = messageViewport;
+	alertObserver = new MutationObserver(() => {
+		syncAlertDock(observedChatRoomRoot, observedMessageViewport);
+	});
+	alertObserver.observe(chatRoomRoot, {
+		childList: true,
+		subtree: true,
+	});
+}
+
 // Capture the chat root node
 watchEffect(() => {
 	if (!list.value || !list.value.domNodes) return;
@@ -143,6 +300,31 @@ watchEffect(() => {
 	rootNode.classList.add("seventv-chat-list");
 
 	containerEl.value = rootNode as HTMLElement;
+
+	const messageViewport =
+		(rootNode.closest("div[aria-label='Chat messages'].chat-list--default") as HTMLElement | null) ?? (rootNode as HTMLElement);
+	const chatRoomRoot = rootNode.closest("section[data-test-selector='chat-room-component-layout']") as HTMLElement | null;
+
+	const headerInsertionParent = messageViewport.parentElement;
+	const headerInsertBefore: Node | null = messageViewport;
+
+	if (
+		!tverinoEnabled.value ||
+		!headerInsertionParent ||
+		!headerInsertBefore
+	) {
+		disconnectAlertRelocationObserver();
+		restoreRelocatedAlertLane();
+		headerHostEl.remove();
+		return;
+	}
+
+	if (headerHostEl.parentElement !== headerInsertionParent || headerHostEl.nextSibling !== headerInsertBefore) {
+		headerInsertionParent.insertBefore(headerHostEl, headerInsertBefore);
+	}
+
+	connectAlertRelocationObserver(chatRoomRoot, messageViewport);
+	syncAlertDock(chatRoomRoot, messageViewport);
 });
 
 const messageHandler = ref<Twitch.MessageHandlerAPI | null>(null);
@@ -232,6 +414,54 @@ function emitLocalSystemMessage(text: string): void {
 	messages.add(message, true);
 }
 
+function createTVerinoLocalMessage(
+	target: SevenTV.TVerinoActiveTarget,
+	message: string,
+	nonce: string,
+): Twitch.ChatMessage | null {
+	if (!store.identity?.id || !store.identity.username) {
+		return null;
+	}
+
+	const displayName =
+		("displayName" in store.identity && store.identity.displayName) || store.identity.username;
+
+	return {
+		id: nonce,
+		type: MessageType.MESSAGE,
+		nonce,
+		channelID: target.id,
+		user: {
+			color: "",
+			isIntl: false,
+			isSubscriber: false,
+			userDisplayName: displayName,
+			displayName,
+			userID: store.identity.id,
+			userLogin: store.identity.username,
+			userType: "",
+		},
+		badgeDynamicData: {},
+		badges: {},
+		deleted: false,
+		banned: false,
+		hidden: false,
+		isHistorical: false,
+		isFirstMsg: false,
+		isReturningChatter: false,
+		isVip: false,
+		messageBody: message,
+		messageParts: [
+			{
+				type: MessagePartType.TEXT,
+				content: message,
+			},
+		],
+		messageType: 0,
+		timestamp: Date.now(),
+	} as Twitch.ChatMessage;
+}
+
 function handlePersonalTimeoutCommand(input: string): string | null {
 	const trimmed = input.trim();
 	if (!trimmed.startsWith("/")) return input;
@@ -300,6 +530,11 @@ watch(
 // Keep track of chat state
 definePropertyHook(controller.value.component, "props", {
 	value(v: typeof controller.value.component.props) {
+		setTwitchHelixAuth({
+			clientID: v.clientID,
+			token: v.authToken,
+		});
+
 		if (v.channelID) {
 			currentChannel.value = {
 				id: v.channelID,
@@ -356,6 +591,28 @@ definePropertyHook(controller.value.component, "props", {
 			}
 
 			if (typeof args[0] === "string") {
+				const activeTarget = tverinoActiveTarget.value;
+				const nextMessage = args[0].trim();
+
+				if (
+					tverinoEnabled.value &&
+					activeTarget.kind === "remote" &&
+					activeTarget.id &&
+					activeTarget.login &&
+					activeTarget.id !== ctx.id &&
+					nextMessage
+				) {
+					const nonce = `tverino:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+					const pending = createTVerinoLocalMessage(activeTarget, nextMessage, nonce);
+					if (pending) {
+						emitTVerinoLocalMessage(activeTarget.id, pending);
+					}
+
+					recentSentEmotes.recordMessage(activeTarget.id, nextMessage, emotes.active);
+					sendTVerinoChatMessage(activeTarget.id, activeTarget.login, nextMessage, nonce);
+					return Promise.resolve(undefined);
+				}
+
 				recentSentEmotes.recordMessage(ctx.id, args[0], emotes.active);
 			}
 
@@ -557,9 +814,12 @@ onBeforeUnmount(() => {
 
 onUnmounted(() => {
 	resizeObserver.disconnect();
+	disconnectAlertRelocationObserver();
 	mod.instance?.messageSendMiddleware.delete(personalTimeoutMiddlewareKey);
 
 	el.remove();
+	headerHostEl.remove();
+	restoreRelocatedAlertLane();
 	if (replacedEl.value) replacedEl.value.classList.remove("seventv-checked");
 
 	log.debug("<ChatController> Unmounted");
@@ -577,6 +837,11 @@ onUnmounted(() => {
 </script>
 
 <style lang="scss">
+seventv-container#seventv-tverino-header {
+	display: block;
+	flex: 0 0 auto;
+}
+
 seventv-container.seventv-chat-list {
 	display: flex;
 	flex-direction: column !important;

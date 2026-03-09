@@ -9,6 +9,7 @@ const workerLog = new Logger();
 workerLog.setContextName("Worker/Pipe");
 
 let worker: SharedWorker | null = null;
+const pendingMessages = [] as WorkerMessage<WorkerMessageType>[];
 
 type WorkerAddrMap = Record<string, string>;
 
@@ -77,6 +78,7 @@ async function init(originURL: string): Promise<SharedWorker> {
 		// Define message handlers
 		useGlobalHandlers(sw.port);
 		useHandlers(sw.port);
+		flushPendingMessages();
 
 		// Emit close on page exit
 		addEventListener("beforeunload", () => {
@@ -88,12 +90,26 @@ async function init(originURL: string): Promise<SharedWorker> {
 }
 
 function sendMessage<T extends WorkerMessageType>(type: T, data: TypedWorkerMessage<T>): void {
-	if (!worker) return;
+	if (!worker) {
+		pendingMessages.push({
+			type,
+			data,
+		});
+		return;
+	}
 
 	worker.port.postMessage({
 		type: type,
 		data: data,
 	});
+}
+
+function flushPendingMessages(): void {
+	if (!worker || pendingMessages.length === 0) return;
+
+	for (const message of pendingMessages.splice(0)) {
+		worker.port.postMessage(message);
+	}
 }
 
 export function useWorker() {
@@ -193,6 +209,18 @@ function useHandlers(mp: MessagePort) {
 			case "PROCESS_CHAT_MESSAGE_RESULT":
 				events.emit("chat_message_processed", data as TypedWorkerMessage<"PROCESS_CHAT_MESSAGE_RESULT">);
 				break;
+			case "TVERINO_CHAT_MESSAGE":
+				events.emit("tverino_chat_message", data as TypedWorkerMessage<"TVERINO_CHAT_MESSAGE">);
+				break;
+			case "TVERINO_CHAT_SEND_RESULT":
+				events.emit("tverino_chat_send_result", data as TypedWorkerMessage<"TVERINO_CHAT_SEND_RESULT">);
+				break;
+			case "TVERINO_CHAT_STATUS":
+				events.emit("tverino_chat_status", data as TypedWorkerMessage<"TVERINO_CHAT_STATUS">);
+				break;
+			case "TVERINO_BADGE_SETS_RESULT":
+				events.emit("tverino_badge_sets_result", data as TypedWorkerMessage<"TVERINO_BADGE_SETS_RESULT">);
+				break;
 		}
 	});
 }
@@ -259,7 +287,11 @@ export type WorkletEventName =
 	| "twitch_emote_set_data"
 	| "emote_set_updated"
 	| "user_updated"
-	| "chat_message_processed";
+	| "chat_message_processed"
+	| "tverino_chat_message"
+	| "tverino_chat_send_result"
+	| "tverino_chat_status"
+	| "tverino_badge_sets_result";
 
 type WorkletTypedEvent<EVN extends WorkletEventName> = {
 	ready: object;
@@ -275,6 +307,10 @@ type WorkletTypedEvent<EVN extends WorkletEventName> = {
 	emote_set_updated: TypedWorkerMessage<"EMOTE_SET_UPDATED">;
 	user_updated: TypedWorkerMessage<"USER_UPDATED">;
 	chat_message_processed: TypedWorkerMessage<"PROCESS_CHAT_MESSAGE_RESULT">;
+	tverino_chat_message: TypedWorkerMessage<"TVERINO_CHAT_MESSAGE">;
+	tverino_chat_send_result: TypedWorkerMessage<"TVERINO_CHAT_SEND_RESULT">;
+	tverino_chat_status: TypedWorkerMessage<"TVERINO_CHAT_STATUS">;
+	tverino_badge_sets_result: TypedWorkerMessage<"TVERINO_BADGE_SETS_RESULT">;
 }[EVN];
 
 export class WorkletEvent<T extends WorkletEventName> extends CustomEvent<WorkletTypedEvent<T>> {

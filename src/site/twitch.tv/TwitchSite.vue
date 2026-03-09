@@ -15,6 +15,8 @@ import { useFrankerFaceZ } from "@/composable/useFrankerFaceZ";
 import { getModule } from "@/composable/useModule";
 import { synchronizeFrankerFaceZ, useConfig, useSettings } from "@/composable/useSettings";
 import { useUserAgent } from "@/composable/useUserAgent";
+import { useWorker } from "@/composable/useWorker";
+import { setTwitchHelixAuth } from "./modules/chat/twitchHelixAuth";
 import type { TwModuleID } from "@/types/tw.module";
 import type { ApolloClient } from "@apollo/client";
 
@@ -25,6 +27,7 @@ const actor = useActor();
 const ua = useUserAgent();
 const ffz = useFrankerFaceZ();
 const apollo = useApollo();
+const { sendMessage: sendWorkerMessage } = useWorker();
 
 ua.preferredFormat = store.avifSupported ? "AVIF" : "WEBP";
 store.setPreferredImageFormat(ua.preferredFormat);
@@ -110,6 +113,18 @@ useComponentHook<Twitch.UserAndSessionUserComponent>(
 					displayName: user.displayName,
 				});
 				actor.setPlatformUserID("TWITCH", user.id);
+
+				if (user.authToken) {
+					setTwitchHelixAuth({
+						token: user.authToken,
+					});
+
+					sendWorkerMessage("TVERINO_CHAT_AUTH", {
+						login: user.login,
+						userID: user.id,
+						token: user.authToken,
+					});
+				}
 			},
 		},
 	},

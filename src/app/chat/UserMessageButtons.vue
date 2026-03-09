@@ -18,7 +18,7 @@
 		>
 			<PinIcon />
 		</div>
-		<div v-tooltip="'Reply'" class="seventv-button" @click="openReplyTray">
+		<div v-if="showReply" v-tooltip="'Reply'" class="seventv-button" @click="openReplyTray">
 			<component :is="msg.parent ? TwChatReply : ReplyIcon" />
 		</div>
 	</div>
@@ -50,9 +50,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useTimeoutFn } from "@vueuse/shared";
 import type { ChatMessage } from "@/common/chat/ChatMessage";
+import { useChannelContext } from "@/composable/channel/useChannelContext";
 import { useFloatScreen } from "@/composable/useFloatContext";
 import { useConfig } from "@/composable/useSettings";
 import { useTray } from "@/site/twitch.tv/modules/chat/components/tray/ChatTray";
@@ -72,6 +73,8 @@ const props = defineProps<{
 const emit = defineEmits<{
 	(e: "pin"): void;
 }>();
+
+const ctx = useChannelContext();
 
 const tray = useTray("Reply", () => ({
 	id: props.msg.id,
@@ -96,6 +99,7 @@ const tray = useTray("Reply", () => ({
 }));
 
 const showCopyIcon = useConfig<boolean>("chat.copy_icon_toggle");
+const showReply = computed(() => !ctx.remote);
 const copyToastOpen = ref(false);
 const copyButtonRef = ref<HTMLElement>();
 const copyToastContainer = useFloatScreen(copyButtonRef, {

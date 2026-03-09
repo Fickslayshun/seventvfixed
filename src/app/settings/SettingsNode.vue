@@ -9,6 +9,11 @@
 		<div class="label">
 			<div class="title" :class="{ unseen }">
 				{{ te(node.label) ? t(node.label) : node.label }}
+				<WarningIcon
+					v-if="node.warningTooltip"
+					v-tooltip:top="te(node.warningTooltip) ? t(node.warningTooltip) : node.warningTooltip"
+					class="warning-icon"
+				/>
 				<CloseIcon
 					v-if="!!standard[node.type] && currentSetting !== node.defaultValue"
 					class="reset-default"
@@ -35,6 +40,7 @@ import { log } from "@/common/Logger";
 import { db } from "@/db/idb";
 import { useConfig } from "@/composable/useSettings";
 import CloseIcon from "@/assets/svg/icons/CloseIcon.vue";
+import WarningIcon from "@/assets/svg/icons/WarningIcon.vue";
 import FormCheckbox from "@/app/settings/control/FormCheckbox.vue";
 import FormColor from "@/app/settings/control/FormColor.vue";
 import FormDropdown from "@/app/settings/control/FormDropdown.vue";
@@ -188,6 +194,16 @@ const com = standard[props.node.type] ?? props.node.custom?.component;
 		&:hover {
 			color: var(--seventv-warning);
 		}
+	}
+
+	.warning-icon {
+		display: inline-block;
+		margin-left: 0.5rem;
+		width: 1rem;
+		height: 1rem;
+		color: #ff9f43;
+		vertical-align: -0.125em;
+		cursor: help;
 	}
 }
 </style>

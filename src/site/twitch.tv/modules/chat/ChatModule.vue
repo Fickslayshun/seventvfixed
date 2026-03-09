@@ -419,6 +419,48 @@ export const config = [
 			String(v) !== "[object Map]"
 				? new Map<string, RecentSentEmoteEntry[]>()
 				: (v as Map<string, RecentSentEmoteEntry[]>),
+	}),
+	declareConfig("chat.tverino.beta_notice", "NONE", {
+		path: ["7TVFixed", "Chat", 6],
+		label: "7TVerino BETA",
+		hint: "Beta feature. Replaces Twitch chat with a tabbed 7TV-styled multi-channel shell. Twitch chat alerts like predictions and drop alerts are currently disabled while this mode is on.",
+		warningTooltip:
+			"This feature is still in beta.\nCurrent limitation:\n- Chat alerts (predictions, drop alerts etc) are disabled while 7TVerino is enabled.",
+		defaultValue: false,
+		serialize: false,
+	}),
+	declareConfig("chat.tverino.enabled", "TOGGLE", {
+		path: ["7TVFixed", "Chat", 7],
+		label: "Enable 7TVerino",
+		hint: "Turn on the 7TVerino beta chat replacement.",
+		warningTooltip:
+			"This feature is still in beta.\nCurrent limitation:\n- Chat alerts (predictions, drop alerts etc) are disabled while 7TVerino is enabled.",
+		defaultValue: false,
+	}),
+	declareConfig<Map<string, SevenTV.TVerinoSavedTab>>("chat.tverino.workspace", "NONE", {
+		label: "7TVerino Workspace",
+		defaultValue: new Map(),
+		transform: (v) =>
+			String(v) !== "[object Map]"
+				? new Map<string, SevenTV.TVerinoSavedTab>()
+				: (v as Map<string, SevenTV.TVerinoSavedTab>),
+	}),
+	declareConfig<SevenTV.TVerinoTransportStatus>("chat.tverino.transport_status", "NONE", {
+		label: "7TVerino Transport Status",
+		defaultValue: {
+			state: "idle",
+			reason: "",
+		},
+		serialize: false,
+	}),
+	declareConfig<SevenTV.TVerinoActiveTarget>("chat.tverino.active_target", "NONE", {
+		label: "7TVerino Active Target",
+		defaultValue: {
+			kind: "native",
+			id: "",
+			login: "",
+			displayName: "",
+		},
 		serialize: false,
 	}),
 	declareConfig<boolean>("highlights.basic.mention", "TOGGLE", {

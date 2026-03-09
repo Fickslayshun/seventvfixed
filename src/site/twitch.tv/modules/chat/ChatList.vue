@@ -85,6 +85,7 @@ const props = defineProps<{
 	restrictions?: HookedInstance<Twitch.ChatRestrictionsComponent>;
 	messageHandler: Twitch.MessageHandlerAPI | null;
 	sharedChatData: Map<string, Twitch.SharedChat> | null;
+	forceHydrated?: boolean;
 }>();
 
 const ctx = useChannelContext();
@@ -218,8 +219,17 @@ onUnmounted(() => {
 let virtualLayoutFrame: number | null = null;
 let forceStickToBottom = false;
 
-const renderedRows = computed(() =>
-	visibleMessages.value.slice(renderedRange.start, renderedRange.end).map((msg, offset) => {
+const renderedRows = computed(() => {
+	if (props.forceHydrated) {
+		return visibleMessages.value.map((msg, index) => ({
+			msg,
+			index,
+			height: getRowHeight(msg),
+			hydrated: true,
+		}));
+	}
+
+	return visibleMessages.value.slice(renderedRange.start, renderedRange.end).map((msg, offset) => {
 		const index = renderedRange.start + offset;
 		return {
 			msg,
@@ -227,8 +237,8 @@ const renderedRows = computed(() =>
 			height: getRowHeight(msg),
 			hydrated: !performance.virtualizationEnabled.value || isHydratedIndex(index),
 		};
-	}),
-);
+	});
+});
 
 useEventListener(
 	() => scroller.container,
@@ -734,7 +744,7 @@ function isHydratedIndex(index: number): boolean {
 }
 
 function recalculateVirtualLayout(): void {
-	if (!performance.virtualizationEnabled.value) {
+	if (props.forceHydrated || !performance.virtualizationEnabled.value) {
 		visibleRange.start = 0;
 		visibleRange.end = visibleMessages.value.length;
 		renderedRange.start = 0;

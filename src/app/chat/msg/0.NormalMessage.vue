@@ -38,17 +38,22 @@ defineProps<{
 
 		.seventv-reply-part {
 			display: flex;
+			align-items: center;
 			font-size: 1.2rem;
 			color: var(--color-text-alt-2);
 			overflow: clip;
+			min-width: 0;
 
 			.seventv-chat-reply-icon {
 				align-items: center;
 				fill: currentcolor;
 				display: inline-flex;
+				flex: 0 0 auto;
 			}
 
 			.seventv-reply-message-part {
+				flex: 1 1 auto;
+				min-width: 0;
 				text-overflow: ellipsis;
 				overflow: clip;
 				white-space: nowrap;

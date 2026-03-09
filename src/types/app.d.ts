@@ -13,6 +13,24 @@ declare interface SeventvGlobalScope {
 declare const seventv: SeventvGlobalScope;
 
 declare namespace SevenTV {
+	interface TVerinoSavedTab {
+		id: string;
+		login: string;
+		displayName: string;
+	}
+
+	interface TVerinoTransportStatus {
+		state: "idle" | "connecting" | "connected" | "error";
+		reason: string;
+	}
+
+	interface TVerinoActiveTarget {
+		kind: "native" | "remote";
+		id: string;
+		login: string;
+		displayName: string;
+	}
+
 	interface Emote {
 		id: ObjectID;
 		name: string;
@@ -90,6 +108,7 @@ declare namespace SevenTV {
 		key: string;
 		label: string;
 		hint?: string;
+		warningTooltip?: string;
 		path?: [string, string] | [string, string, string | number];
 		timestamp?: number;
 		expires?: number;
